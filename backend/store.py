@@ -38,7 +38,13 @@ CREATE TABLE IF NOT EXISTS messages (
     body_text       TEXT,
     body_truncated  INTEGER DEFAULT 0,
     summary         TEXT,
+    category        TEXT,
     fetched_at      REAL
+);
+
+CREATE TABLE IF NOT EXISTS categories (
+    name        TEXT PRIMARY KEY,
+    created_at  REAL
 );
 
 CREATE TABLE IF NOT EXISTS skipped (
@@ -52,7 +58,25 @@ CREATE TABLE IF NOT EXISTS blocked (
     sender_name TEXT,
     blocked_at  REAL
 );
+
+CREATE TABLE IF NOT EXISTS promo_blocked (
+    email       TEXT PRIMARY KEY,
+    sender_name TEXT,
+    promo_blocked_at REAL
+);
 """
+
+_DEFAULT_CATEGORIES = [
+    "Newsletter",
+    "Share/Stock",
+    "School",
+    "Offer/Deal",
+    "News",
+    "Finance/Bill",
+    "Personal",
+    "Unclear",
+    "Other",
+]
 
 
 def _get() -> sqlite3.Connection:
@@ -63,25 +87,48 @@ def _get() -> sqlite3.Connection:
         _conn.row_factory = sqlite3.Row
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.executescript(_SCHEMA)
+        try:
+            # Older databases created before the column existed.
+            _conn.execute("ALTER TABLE messages ADD COLUMN category TEXT")
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError):
+            pass  # column already present (new schema or a prior run)
+        _seed_default_categories()
         _conn.commit()
     return _conn
 
 
+def _seed_default_categories() -> None:
+    """Insert the default category set if the table is empty."""
+    try:
+        count = _get().execute("SELECT COUNT(*) FROM categories").fetchone()[0]
+        if count == 0:
+            _get().executemany(
+                "INSERT OR IGNORE INTO categories (name, created_at) VALUES (?, ?)",
+                [(name, time.time()) for name in _DEFAULT_CATEGORIES],
+            )
+            _get().commit()
+    except Exception as exc:
+        logger.warning("store._seed_default_categories failed: %s", exc)
+
+
 def save_message(msg: dict, summary: dict | None = None) -> None:
-    """Persist a full message (body + labels + optional summary)."""
+    """Persist a full message (body + labels + optional summary + category)."""
     mid = msg.get("id")
     if not mid:
         return
     summary = summary if summary is not None else msg.get("summary")
     labels = msg.get("label_ids") or []
+    category = msg.get("category")
+    if not category and isinstance(summary, dict):
+        category = summary.get("category")
     try:
         with _lock:
             _get().execute(
                 """INSERT INTO messages
                    (id, sender_name, sender_email, subject, snippet,
                     internal_date_ms, label_ids, promo, body_text,
-                    body_truncated, summary, fetched_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                    body_truncated, summary, category, fetched_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(id) DO UPDATE SET
                      sender_name=excluded.sender_name,
                      sender_email=excluded.sender_email,
@@ -93,6 +140,7 @@ def save_message(msg: dict, summary: dict | None = None) -> None:
                      body_text=excluded.body_text,
                      body_truncated=excluded.body_truncated,
                      summary=excluded.summary,
+                     category=excluded.category,
                      fetched_at=excluded.fetched_at""",
                 (
                     mid,
@@ -106,6 +154,7 @@ def save_message(msg: dict, summary: dict | None = None) -> None:
                     msg.get("body_text"),
                     1 if msg.get("body_truncated") else 0,
                     json.dumps(summary, ensure_ascii=False) if summary else None,
+                    category if category else None,
                     time.time(),
                 ),
             )
@@ -137,6 +186,7 @@ def load_message(message_id: str) -> dict | None:
         "promo": bool(row["promo"]),
         "body_text": row["body_text"] or "",
         "body_truncated": bool(row["body_truncated"]),
+        "category": row["category"],
     }
     if row["summary"]:
         try:
@@ -187,6 +237,68 @@ def clear_cache() -> int:
 
 def _is_promo(labels: list[str]) -> bool:
     return "CATEGORY_PROMOTIONS" in (labels or [])
+
+
+# --- Email categories --------------------------------------------------------
+# User-managed category list used as the enum for AI summaries. Persisted so
+# the taxonomy chosen by the user survives reloads.
+
+def seed_default_categories() -> None:
+    """Insert the default category set if the table is empty."""
+    try:
+        with _lock:
+            _seed_default_categories()
+    except Exception as exc:
+        logger.warning("store.seed_default_categories failed: %s", exc)
+
+
+def get_categories() -> list[str]:
+    """Return all category names, sorted."""
+    try:
+        with _lock:
+            rows = _get().execute(
+                "SELECT name FROM categories ORDER BY name COLLATE NOCASE"
+            ).fetchall()
+        return [str(r["name"]) for r in rows]
+    except Exception as exc:
+        logger.warning("store.get_categories failed: %s", exc)
+        return list(_DEFAULT_CATEGORIES)
+
+
+def add_category(name: str) -> list[str]:
+    """Add a category (dedupe, case-insensitive). Return updated sorted list."""
+    name = (name or "").strip()
+    if name:
+        try:
+            with _lock:
+                existing = {
+                    str(r["name"]).lower(): str(r["name"])
+                    for r in _get().execute("SELECT name FROM categories").fetchall()
+                }
+                if name.lower() not in existing:
+                    _get().execute(
+                        "INSERT INTO categories (name, created_at) VALUES (?, ?)",
+                        (name, time.time()),
+                    )
+                    _get().commit()
+        except Exception as exc:
+            logger.warning("store.add_category failed: %s", exc)
+    return get_categories()
+
+
+def remove_category(name: str) -> list[str]:
+    """Remove a category. Return updated sorted list."""
+    name = (name or "").strip()
+    if name:
+        try:
+            with _lock:
+                _get().execute(
+                    "DELETE FROM categories WHERE lower(name) = lower(?)", (name,)
+                )
+                _get().commit()
+        except Exception as exc:
+            logger.warning("store.remove_category failed: %s", exc)
+    return get_categories()
 
 
 # --- Skipped-for-now ---------------------------------------------------------
@@ -307,3 +419,45 @@ def clear_blocked() -> int:
     except Exception as exc:
         logger.warning("store.clear_blocked failed: %s", exc)
     return cleared
+
+
+# --- Promo auto-delete (promo-only senders) -----------------------------------
+# Like blocked senders, but only PROMO-labelled mail from the vendor is trashed;
+# regular (non-promo) mail keeps flowing. Matched on every queue pull.
+
+def add_promo_blocked(email: str, sender_name: str | None = None) -> None:
+    if not email:
+        return
+    try:
+        with _lock:
+            _get().execute(
+                "INSERT OR REPLACE INTO promo_blocked (email, sender_name, promo_blocked_at) VALUES (?,?,?)",
+                (email, sender_name or "", time.time()),
+            )
+            _get().commit()
+    except Exception as exc:
+        logger.warning("store.add_promo_blocked failed: %s", exc)
+
+
+def remove_promo_blocked(email: str) -> None:
+    try:
+        with _lock:
+            _get().execute("DELETE FROM promo_blocked WHERE email = ?", (email,))
+            _get().commit()
+    except Exception as exc:
+        logger.warning("store.remove_promo_blocked failed: %s", exc)
+
+
+def list_promo_blocked() -> list[dict]:
+    try:
+        with _lock:
+            rows = _get().execute(
+                "SELECT email, sender_name, promo_blocked_at FROM promo_blocked ORDER BY promo_blocked_at"
+            ).fetchall()
+    except Exception as exc:
+        logger.warning("store.list_promo_blocked failed: %s", exc)
+        return []
+    return [
+        {"email": r["email"], "sender_name": r["sender_name"], "promo_blocked_at": r["promo_blocked_at"]}
+        for r in rows
+    ]

@@ -24,6 +24,15 @@ const state = {
   nextPageToken: null,    // Gmail pagination token for "load next batch"
   blockedSenders: [],     // [{email, sender_name}] auto-deleted on every pull
   showBlockedList: false,
+  promoBlockedSenders: [],  // [{email, sender_name}] promo mail auto-deleted on every pull
+  showPromoBlockedList: false,
+  activeGroupKey: null,    // "singles" | bundle_key | null
+  expandedCardId: null,    // currently inline-expanded email id
+  activeCategory: "all",   // category filter
+  categories: [],          // allowed category names from /api/categories
+  pendingOps: [],          // [{id, action, groupKey, label, count, status, ts}] background bulk ops
+  visibleEmails: [],       // emails currently shown in the middle pane (group view)
+  autoSelectedOnce: false, // pick a default group only on the very first queue load
 };
 
 /* ───────────────────────────── Elements ────────────────────────── */
@@ -35,22 +44,21 @@ const el = {
   app: $("app"),
   remainCount: $("remainCount"), remainSub: $("remainSub"),
   progressFill: $("progressFill"), queueMeta: $("queueMeta"),
-  upNext: $("upNext"), historyList: $("historyList"),
+  historyList: $("historyList"),
   groupList: $("groupList"), groupsCount: $("groupsCount"),
   cacheInfo: $("cacheInfo"),
   skippedBtn: $("skippedBtn"), skippedCount: $("skippedCount"), skippedRestoreBtn: $("skippedRestoreBtn"),
   skipForNowBtn: $("skipForNowBtn"),
   blockedBtn: $("blockedBtn"), blockedCount: $("blockedCount"), blockedList: $("blockedList"),
+  promoBlockedBtn: $("promoBlockedBtn"), promoBlockedCount: $("promoBlockedCount"), promoBlockedList: $("promoBlockedList"),
   loadMoreBtn: $("loadMoreBtn"),
   userChip: $("userChip"), logoutBtn: $("logoutBtn"),
-  themeBtn: $("themeBtn"), themeIconMoon: $("themeIconMoon"), themeIconSun: $("themeIconSun"),
+  themeBtn: $("themeBtn"), themeIconMoon: $("themeIconMoon"), themeIconSun: $("themeIconSun"), themeIconApple: $("themeIconApple"),
   position: $("position"), positionTotal: $("positionTotal"),
   undoTopBtn: $("undoTopBtn"), reloadBtn: $("reloadBtn"), clearCacheBtn: $("clearCacheBtn"),
-  bundleBanner: $("bundleBanner"), bundleText: $("bundleText"),
-  bundleDeleteBtn: $("bundleDeleteBtn"), bundleArchiveBtn: $("bundleArchiveBtn"),
-  stage: $("stage"), summaryBox: $("summaryBox"), metaBox: $("metaBox"),
-  emailBodyBox: $("emailBodyBox"), toasts: $("toasts"),
+  toasts: $("toasts"),
   emptyScreen: $("emptyScreen"), emptyStat: $("emptyStat"), emptyReload: $("emptyReload"),
+  groupHeader: $("groupHeader"), groupTitle: $("groupTitle"), groupCount: $("groupCount"), groupOverview: $("groupOverview"), bulkDeleteBtn: $("bulkDeleteBtn"), bulkArchiveBtn: $("bulkArchiveBtn"), emailCards: $("emailCards"), categoryChips: $("categoryChips"), categoryInput: $("categoryInput"), categoryAddBtn: $("categoryAddBtn"), categoriesCount: $("categoriesCount"),
 };
 
 /* ───────────────────────────── Utils ───────────────────────────── */
@@ -81,8 +89,6 @@ function linkify(text) {
     }
   );
 }
-
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function api(path, opts = {}) {
   const res = await fetch(path, {
@@ -129,15 +135,30 @@ function clearToasts() {
 }
 
 /* ───────────────────────────── Theme ───────────────────────────── */
+const THEMES = ["dark", "light", "apple"];
+
+function currentTheme() {
+  if (document.documentElement.classList.contains("dark")) return "dark";
+  if (document.documentElement.getAttribute("data-theme") === "apple") return "apple";
+  return "light";
+}
+
 function applyThemeUI() {
-  const dark = document.documentElement.classList.contains("dark");
-  el.themeIconMoon.classList.toggle("hidden", dark);
-  el.themeIconSun.classList.toggle("hidden", !dark);
+  const t = currentTheme();
+  el.themeIconMoon.classList.toggle("hidden", t !== "dark");
+  el.themeIconSun.classList.toggle("hidden", t !== "light");
+  el.themeIconApple.classList.toggle("hidden", t !== "apple");
+  el.themeBtn.title = t === "dark" ? "Theme: dark — click for light"
+    : t === "light" ? "Theme: light — click for Apple-like"
+    : "Theme: Apple — click for dark";
 }
 
 function toggleTheme() {
-  const dark = document.documentElement.classList.toggle("dark");
-  try { localStorage.setItem("gmailer-theme", dark ? "dark" : "light"); } catch (e) {}
+  const next = THEMES[(THEMES.indexOf(currentTheme()) + 1) % THEMES.length];
+  document.documentElement.classList.toggle("dark", next === "dark");
+  if (next === "apple") document.documentElement.setAttribute("data-theme", "apple");
+  else document.documentElement.removeAttribute("data-theme");
+  try { localStorage.setItem("gmailer-theme", next); } catch (e) {}
   applyThemeUI();
 }
 
@@ -204,6 +225,7 @@ async function init() {
     state.authenticated = true;
     state.email = status.email;
     el.userChip.textContent = state.email || "";
+    loadCategories();
     await loadQueue();
   } catch (e) {
     showAuth({ credentials_found: true });
@@ -213,10 +235,11 @@ async function init() {
 async function loadQueue() {
   await showLoading("Pulling latest unread inbox…");
   try {
-    const [data, skippedRes, blockedRes] = await Promise.all([
+    const [data, skippedRes, blockedRes, promoRes] = await Promise.all([
       api(`/api/queue?max_results=${BATCH}`),
       api("/api/skipped").catch(() => ({ items: [] })),
       api("/api/blocked").catch(() => ({ items: [] })),
+      api("/api/promo-blocked").catch(() => ({ items: [] })),
     ]);
     const skipped = skippedRes.items || [];
     state.skippedIds = new Set(skipped.map((i) => i.id));
@@ -234,11 +257,12 @@ async function loadQueue() {
     state.cacheCount = data.cache_count || 0;
     state.nextPageToken = data.next_page_token || null;
     state.blockedSenders = blockedRes.items || [];
+    state.promoBlockedSenders = promoRes.items || [];
     showMain();
     if (state.queue.length === 0) { showEmpty(); return; }
     await renderAll(true);
     if (data.auto_deleted) {
-      toast(`Auto-deleted ${data.auto_deleted} email${data.auto_deleted === 1 ? "" : "s"} from blocked senders`, "info", { duration: 3000 });
+      toast(`Auto-deleted ${data.auto_deleted} email${data.auto_deleted === 1 ? "" : "s"} from blocked / promo-deleted senders`, "info", { duration: 3000 });
     }
   } catch (e) {
     el.loadingText.textContent = `Failed to load queue: ${e.message}`;
@@ -263,10 +287,10 @@ async function loadMore() {
     showMain();
     renderSidebar();
     if (state.queue.length === 0) { showEmpty(); return; }
-    await showItem();
+    renderGroupView();
     toast(`Loaded ${added.length} more · in queue: ${state.queue.length}`, "ok", { duration: 2000 });
     if (data.auto_deleted) {
-      toast(`Auto-deleted ${data.auto_deleted} more from blocked senders`, "info", { duration: 2600 });
+      toast(`Auto-deleted ${data.auto_deleted} more from blocked / promo-deleted senders`, "info", { duration: 2600 });
     }
   } catch (e) {
     el.loadingText.textContent = `Failed to load more: ${e.message}`;
@@ -277,17 +301,13 @@ async function loadMore() {
 }
 
 /* ───────────────────────────── Detail + prefetch ───────────────── */
-function currentItem() {
-  return state.queue[state.index] || null;
-}
-
 async function fetchDetail(id) {
   if (state.detail.has(id) || state.fetching.has(id)) return state.detail.get(id);
   state.fetching.add(id);
   try {
     const d = await api(`/api/messages/${id}`);
     state.detail.set(id, d);
-    if (state.renderedId === id) pumpDetail(d);
+    pumpDetail(d);
     return d;
   } catch (e) {
     console.warn("detail fetch failed", id, e.message);
@@ -297,138 +317,64 @@ async function fetchDetail(id) {
   }
 }
 
-async function ensurePreload() {
-  for (let i = state.index + 1; i <= state.index + 2; i++) {
-    const item = state.queue[i];
-    if (item) fetchDetail(item.id);
+function pumpDetail(d) {
+  if (!d || !d.id) return;
+  const it = state.queue.find((x) => x.id === d.id);
+  if (it && d.summary) {
+    it.summary = {
+      ...(it.summary || {}),
+      ...d.summary,
+    };
+    if (d.preview) it.preview = d.preview;
+  }
+  const visibleIds = new Set((state.visibleEmails || []).map((x) => x.id));
+  if (state.expandedCardId === d.id || visibleIds.has(d.id)) renderGroupView();
+}
+
+/* Summarize ungrouped ("singles") emails in the background so their
+   cards populate without needing a manual expand. Bounded concurrency. */
+let singleSummQueue = [];
+let singleSummInFlight = 0;
+let singleSummTimer = null;
+const SINGLE_SUMM_CONCURRENCY = 2;
+
+function scheduleSingleSummarize(ids) {
+  for (const id of ids) {
+    if (state.detail.has(id) || state.fetching.has(id) || singleSummQueue.includes(id)) continue;
+    const it = state.queue.find((x) => x.id === id);
+    if (it && it.summary && it.summary.one_liner) continue;
+    singleSummQueue.push(id);
+  }
+  if (singleSummQueue.length > 200) singleSummQueue.length = 200;
+  if (!singleSummTimer) {
+    singleSummTimer = setTimeout(bumpSingleSummarize, 400);
   }
 }
 
-function pumpDetail(d) {
-  if (state.renderedId !== d.id) return;
-  renderSummary(d);
-  renderBody(d);
+function bumpSingleSummarize() {
+  singleSummTimer = null;
+  while (singleSummQueue.length && singleSummInFlight < SINGLE_SUMM_CONCURRENCY) {
+    const id = singleSummQueue.shift();
+    const it = state.queue.find((x) => x.id === id);
+    if (!it || (it.summary && it.summary.one_liner)) continue;
+    singleSummInFlight++;
+    fetchDetail(id).finally(() => {
+      singleSummInFlight--;
+      bumpSingleSummarize();
+    });
+  }
 }
 
 /* ───────────────────────────── Rendering ───────────────────────── */
 async function renderAll(initial = false) {
+  if (initial && !state.autoSelectedOnce) {
+    state.autoSelectedOnce = true;
+    const picked = pickDefaultGroup();
+    if (picked) { selectGroup(picked); return; }
+  }
   renderSidebar();
-  if (initial) {
-    const item = currentItem();
-    state.renderedId = null;
-    renderStage(item);
-    if (item) fetchDetail(item.id);
-    ensurePreload();
-  } else {
-    await showItem();
-  }
-}
-
-async function showItem() {
-  const item = currentItem();
-  if (!item) {
-    if (state.queue.length === 0) { showEmpty(); return; }
-    return;
-  }
-  el.stage.classList.add("slide-out");
-  await wait(170);
-  renderStage(item);
-  el.stage.classList.remove("slide-out");
-  el.stage.classList.add("slide-in");
-  ensurePreload();
-}
-
-function renderStage(item) {
-  state.renderedId = item.id;
-  renderBundleBanner(item);
-  renderSidebar();
-  renderMeta(item);
-  const cached = state.detail.get(item.id);
-  if (cached) { renderSummary(cached); renderBody(cached); }
-  else {
-    if (item.summary) renderSummary({ summary: item.summary });
-    else renderShimmerSummary();
-    renderShimmerBody();
-    fetchDetail(item.id);
-  }
-}
-
-function renderMeta(item) {
-  const sender = item.sender_name || "Unknown sender";
-  const addr = item.sender_email ? `<span class="text-slate-600 dark:text-slate-500">${esc(item.sender_email)}</span>` : "";
-  const date = item.internal_date_ms ? timeAgo(new Date(item.internal_date_ms).toISOString()) : "";
-  const promo = item.promo
-    ? `<span class="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-300" title="Gmail category: Promotions">PROMO</span>`
-    : "";
-  el.metaBox.innerHTML = `
-    <h2 class="text-4xl font-black tracking-tight leading-tight">${esc(sender)}</h2>
-    <div class="mt-1 flex items-baseline gap-3 flex-wrap">
-      ${addr}
-      <span class="text-slate-600 dark:text-slate-500 text-sm">${esc(date)}</span>
-    </div>
-    <h3 class="mt-3 text-2xl font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">${esc(item.subject)} ${promo}</h3>
-    ${item.sender_email ? `
-    <button data-blocksender="${esc(item.sender_email)}" data-blocksendername="${esc(sender)}"
-      class="mt-3 rounded-lg border border-red-500/50 px-2.5 py-1 text-[11px] font-bold text-red-600 dark:text-red-300 transition hover:bg-red-500/10 hover:border-red-500"
-      title="Trash all current + future mail from ${esc(item.sender_email)} on every pull">Block — auto-delete all from this sender</button>` : ""}
-  `;
-}
-
-function renderSummary(d) {
-  const s = d.summary || {};
-  const latency = (((s.latency_ms || 0) / 1000)).toFixed(1);
-  const pill = s.mock
-    ? `<span class="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-300">OFFLINE FALLBACK</span>`
-    : `<span class="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">in ${s.tokens_in || 0} tok · out ${s.tokens_out || 0} tok · ${latency}s</span>
-       <span class="text-[10px] text-slate-500 dark:text-slate-400">${esc(s.model || "")}</span>`;
-  el.summaryBox.innerHTML = `
-    <div class="flex items-center gap-2 mb-2 flex-wrap">
-      <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 fill-violet-600 dark:fill-violet-400" aria-hidden="true"><path d="M20 7h-4V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2zM14 5v2h-4V5h4z"/></svg>
-      <span class="text-[11px] font-black tracking-[0.2em] text-violet-700 dark:text-violet-300">AI TL;DR SUMMARY</span>
-      ${pill}
-    </div>
-    <p class="text-lg font-semibold text-violet-800 dark:text-violet-100">${esc(s.one_liner || "")}</p>
-    <ul class="mt-2 space-y-1 text-sm text-slate-600 dark:text-slate-300">
-      ${(s.bullets || []).map((b) => `<li class="flex gap-2"><span class="text-violet-600 dark:text-violet-400">▸</span><span>${esc(b)}</span></li>`).join("")}
-    </ul>
-  `;
-}
-
-function renderBody(d) {
-  const body = (d.body_text || "(no extractable text)");
-  const truncated = d.body_truncated
-    ? `<p class="mt-3 text-xs text-amber-600 dark:text-amber-400/80">Body truncated at 80k chars for speed.</p>` : "";
-  el.emailBodyBox.innerHTML = `<div class="email-body">${linkify(body)}</div>${truncated}`;
-}
-
-function renderShimmerSummary() {
-  el.summaryBox.innerHTML = `
-    <div class="flex items-center gap-2 mb-2"><span class="shimmer h-3 w-28"></span></div>
-    <div class="shimmer h-5 w-full max-w-lg"></div>
-    <div class="mt-2 shimmer h-4 w-full max-w-md"></div>
-    <div class="mt-1 shimmer h-4 w-full max-w-sm"></div>
-  `;
-}
-
-function renderShimmerBody() {
-  el.emailBodyBox.innerHTML = `
-    <div class="shimmer h-4 w-full"></div>
-    <div class="mt-2 shimmer h-4 w-3/4"></div>
-    <div class="mt-2 shimmer h-4 w-5/6"></div>
-    <div class="mt-2 shimmer h-4 w-2/3"></div>
-  `;
-}
-
-/* ─────────────── Bundle banner ─────────────── */
-function renderBundleBanner(item) {
-  const remaining = state.queue.filter((i) => i.bundle_key === item.bundle_key && i.bundle_count > 1).length;
-  if (!item.in_bundle || remaining < 2) {
-    el.bundleBanner.classList.add("hidden");
-    return;
-  }
-  const name = item.bundle_sender_name || item.sender_name || item.sender_email;
-  el.bundleText.textContent = `You have ${remaining} emails from ${name}. Mow them all down:`;
-  el.bundleBanner.classList.remove("hidden");
+  renderGroupView();
+  renderCategoryChips();
 }
 
 /* ───────────────────────────── Sidebar ─────────────────────────── */
@@ -440,8 +386,18 @@ function renderSidebar() {
   el.progressFill.style.width = `${pct}%`;
   el.queueMeta.textContent = `${pct}% cleared · ${state.originalTotal} in batch`;
 
-  el.position.textContent = Math.min(state.index + 1, state.queue.length);
-  el.positionTotal.textContent = state.queue.length;
+  const _keys = groupKeys();
+  const _idx = _keys.indexOf(state.activeGroupKey);
+  if (state.activeGroupKey === null) {
+    el.position.textContent = "No group selected";
+    el.positionTotal.textContent = `${state.queue.length} in batch`;
+  } else if (_idx === -1) {
+    el.position.textContent = "Group";
+    el.positionTotal.textContent = `${state.visibleEmails.length} shown`;
+  } else {
+    el.position.textContent = `Group ${_idx + 1}/${_keys.length}`;
+    el.positionTotal.textContent = `${state.visibleEmails.length} shown`;
+  }
 
   el.cacheInfo.textContent = state.cacheCount
     ? `local cache: ${state.cacheCount} email${state.cacheCount === 1 ? "" : "s"} on disk`
@@ -471,37 +427,146 @@ function renderSidebar() {
     el.blockedList.classList.add("hidden");
   }
 
+  const nPromo = state.promoBlockedSenders.length;
+  if (nPromo) {
+    el.promoBlockedCount.textContent = nPromo;
+    el.promoBlockedBtn.classList.remove("hidden");
+    el.promoBlockedList.innerHTML = state.promoBlockedSenders.map((b) => `
+      <li class="flex items-center gap-2 text-[11px]">
+        <span class="min-w-0 flex-1 truncate text-amber-700 dark:text-amber-300 font-semibold">${esc(b.sender_name || b.email)}</span>
+        <span class="max-w-[40%] truncate text-[9px] text-slate-400 dark:text-slate-500">${esc(b.email)}</span>
+        <button data-unpromoblock="${esc(b.email)}" class="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition">off</button>
+      </li>`).join("");
+    el.promoBlockedList.classList.toggle("hidden", !state.showPromoBlockedList);
+  } else {
+    el.promoBlockedBtn.classList.add("hidden");
+    el.promoBlockedList.classList.add("hidden");
+  }
+
   el.loadMoreBtn.classList.toggle("hidden", !state.nextPageToken);
 
-  const five = [];
-  for (let i = state.index; i < state.queue.length && five.length < 5; i++) five.push({ n: i, item: state.queue[i] });
-
-  el.upNext.innerHTML = five.map(({ n, item }) => `
-    <li class="up-next-row ${n === state.index ? "current" : ""} rounded-lg px-2 py-1.5 flex items-start gap-2">
-      <span class="text-xs text-slate-500 dark:text-slate-600 font-mono tabular-nums mt-0.5 w-5 text-right">${n + 1}</span>
-      <div class="min-w-0 flex-1">
-        <p class="text-[13px] font-semibold text-slate-800 dark:text-slate-200 truncate">${esc(item.sender_name || item.sender_email)}</p>
-        <p class="text-xs text-slate-600 dark:text-slate-500 truncate">${esc(item.subject)}</p>
-      </div>
-      ${item.bundle_count > 1 ? `<span class="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">×${item.bundle_count}</span>` : ""}
-    </li>
-  `).join("") || `<li class="text-xs text-slate-500 dark:text-slate-600">End of queue</li>`;
-
-  renderHistory();
+  renderPendingOps();
   renderGroups();
+  renderCategoryChips();
 }
 
 function renderHistory() {
-  el.historyList.innerHTML = state.history.slice(0, 3).map((h, i) => `
+  renderPendingOps();
+}
+
+function opLine(o) {
+  const icon = o.status === "running" ? "🕐" : o.status === "done" ? "✓" : "✕";
+  const tone = o.status === "running"
+    ? "text-violet-700 dark:text-violet-300"
+    : o.status === "done"
+      ? "text-emerald-600 dark:text-emerald-400"
+      : "text-red-600 dark:text-red-400";
+  const runningCls = o.status === "running" ? "border-violet-500/40 bg-violet-500/10" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60";
+  const dim = o.status === "done" || o.status === "failed" ? " opacity-70" : "";
+  return `
+    <div class="rounded-lg border px-3 py-1.5 flex items-center gap-2 ${runningCls}${dim}">
+      <span class="text-xs ${tone} flex items-center gap-1.5 min-w-0">
+        <span class="shrink-0">${icon}</span>
+        <span class="truncate">${esc(o.label)}</span>
+      </span>
+      ${o.status === "running" ? `<span class="ml-auto shrink-0 text-[9px] text-slate-400 italic">in progress…</span>` : ""}
+    </div>`;
+}
+
+function renderPendingOps() {
+  const pendingHTML = state.pendingOps.map(opLine).join("");
+  const historyHTML = state.history.slice(0, 3).map((h, i) => `
     <div class="rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60 px-3 py-2 flex items-center gap-2">
       <span class="text-xs text-slate-600 dark:text-slate-400 flex-1 truncate">${esc(h.label)}</span>
       <button data-undo="${i}" class="rounded bg-violet-500/15 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-500/30 transition">Undo</button>
     </div>
-  `).join("") || `<p class="text-xs text-slate-500 dark:text-slate-600">No actions yet. D to delete, E to archive.</p>`;
+  `).join("");
+  el.historyList.innerHTML = (pendingHTML + historyHTML)
+    || `<p class="text-xs text-slate-500 dark:text-slate-600">No actions yet. D to delete, E to archive.</p>`;
 
   el.historyList.querySelectorAll("[data-undo]").forEach((btn) => {
     btn.addEventListener("click", () => undoIndex(parseInt(btn.dataset.undo, 10)));
   });
+}
+
+function scheduleOpRemoval(op) {
+  setTimeout(() => {
+    const i = state.pendingOps.findIndex((o) => o.id === op.id);
+    if (i !== -1) state.pendingOps.splice(i, 1);
+    renderPendingOps();
+  }, 8000);
+}
+
+/* ───────────────────────────── Categories ─────────────────────── */
+function normalizeCategoryList(data) {
+  const list = Array.isArray(data) ? data : (data && data.items) || (data && data.categories) || [];
+  return [...new Set(list.map(String).filter(Boolean))];
+}
+
+async function loadCategories() {
+  try {
+    const data = await api("/api/categories", { method: "GET" });
+    state.categories = normalizeCategoryList(data);
+    renderCategoryChips();
+  } catch (e) { /* already toasted by api(); keep state.categories as-is */ }
+}
+
+function renderCategoryChips() {
+  const countFor = (cat) => state.queue.filter((it) => emailCategory(it) === cat).length;
+  const chipCls = (active) =>
+    `rounded-lg border px-2 py-1 text-[10px] font-bold transition cursor-pointer select-none flex items-center gap-1 ` +
+    (active
+      ? `border-violet-500/60 bg-violet-500/10 text-violet-800 dark:text-violet-200`
+      : `border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-300 dark:hover:bg-slate-800/70`);
+
+  let html = `
+    <button type="button" data-cat="all" class="${chipCls(state.activeCategory === "all")}">
+      All <span class="text-[10px] opacity-70">${state.queue.length}</span>
+    </button>`;
+
+  for (const cat of state.categories) {
+    const n = countFor(cat);
+    html += `
+      <button type="button" data-cat="${esc(cat)}" class="${chipCls(state.activeCategory === cat)}">
+        <span class="truncate max-w-[140px]">${esc(cat)}</span>
+        <span class="text-[10px] opacity-70">${n}</span>
+        <span data-catremove="${esc(cat)}" class="ml-0.5 rounded px-0.5 text-[11px] leading-none text-slate-400 hover:text-red-500 hover:bg-red-500/10" title="Remove category">×</span>
+      </button>`;
+  }
+
+  el.categoryChips.innerHTML = html;
+  el.categoriesCount.textContent = state.categories.length;
+}
+
+async function addCategory() {
+  const name = el.categoryInput.value.trim();
+  if (!name) return;
+  try {
+    const data = await api("/api/categories/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    state.categories = normalizeCategoryList(data);
+    el.categoryInput.value = "";
+    toast("Category added", "ok", { duration: 1800 });
+    renderCategoryChips();
+  } catch (e) { /* api() already toasted */ }
+}
+
+async function removeCategory(name) {
+  try {
+    const data = await api("/api/categories/remove", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    state.categories = normalizeCategoryList(data);
+    if (state.activeCategory === name) state.activeCategory = "all";
+    renderCategoryChips();
+    renderGroupView();
+    toast(`Removed category: ${name}`, "info", { duration: 2000 });
+  } catch (e) { /* api() already toasted */ }
 }
 
 /* ───────────────────────────── Groups ──────────────────────────── */
@@ -522,127 +587,261 @@ function currentGroups() {
   return [...seen.values()].sort((a, b) => b.ids.length - a.ids.length);
 }
 
+function groupKeys() {
+  const keys = [];
+  if (state.queue.some((i) => (i.bundle_count || 1) <= 1)) keys.push("singles");
+  for (const g of currentGroups()) keys.push(g.key);
+  return keys;
+}
+
+function pickDefaultGroup() {
+  if (state.queue.some((i) => (i.bundle_count || 1) <= 1)) return "singles";
+  const g = currentGroups()[0];
+  return g ? g.key : null;
+}
+
 function renderGroups() {
   const groups = currentGroups();
   el.groupsCount.textContent = groups.length
     ? `${groups.length} sender${groups.length === 1 ? "" : "s"}` : "";
-  const sig = JSON.stringify(groups.map((g) => [g.key, g.ids.join(",")]));
-  if (sig !== state.groupsSig) {
-    state.groupsSig = sig;
-    el.groupList.innerHTML = groups.length
-      ? groups.map(groupRow).join("")
-      : `<li class="text-xs text-slate-500 dark:text-slate-600">No repeat senders yet.</li>`;
-  }
-  groups.forEach((g) => { if (state.expandedGroups.has(g.key)) paintGroup(g.key); });
+  state.groupsSig = JSON.stringify(groups.map((g) => [g.key, g.ids.join(",")]));
+
+  const singleIds = state.queue
+    .filter((i) => (i.bundle_count || 1) <= 1)
+    .map((i) => i.id);
+  let rows = "";
+  if (singleIds.length) rows += groupRow({ key: "singles", label: "Singles", ids: singleIds });
+  rows += groups.map(groupRow).join("");
+  if (!rows) rows = `<li class="text-xs text-slate-500 dark:text-slate-600">No repeat senders yet.</li>`;
+  el.groupList.innerHTML = rows;
 }
 
 function groupRow(g) {
-  const open = state.expandedGroups.has(g.key);
-  return `
-    <li class="rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60">
-      <div class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none" data-toggle="${esc(g.key)}" title="Show summaries">
-        <svg viewBox="0 0 16 16" class="h-3.5 w-3.5 shrink-0 text-slate-500 dark:text-slate-400 transition-transform ${open ? "rotate-90" : ""}" id="chev_${g.key}"><path fill="currentColor" d="M6 4l4 4-4 4z"/></svg>
-        <p class="min-w-0 flex-1 text-[13px] font-semibold text-slate-800 dark:text-slate-200 truncate">${esc(g.label)}</p>
-        <span class="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">×${g.ids.length}</span>
-      </div>
-      <div id="grp_${g.key}" class="px-3 pb-2.5 space-y-2 ${open ? "" : "hidden"}"></div>
-    </li>`;
-}
-
-function paintGroup(key) {
-  const g = currentGroups().find((x) => x.key === key);
-  const chev = document.getElementById(`chev_${key}`);
-  const box = document.getElementById(`grp_${key}`);
-  if (chev) chev.classList.toggle("rotate-90", state.expandedGroups.has(key));
-  if (!box) return;
-  if (!state.expandedGroups.has(key)) { box.classList.add("hidden"); box.innerHTML = ""; return; }
-  box.classList.remove("hidden");
-  const cache = state.groupCache.get(key);
-  if (!cache || !cache.summaries) {
-    box.innerHTML = `<div class="px-1 py-1 text-[11px] text-slate-500 dark:text-slate-500 animate-pulse">Summarizing ${g ? g.ids.length : ""} emails…</div>`;
-    if (g) fetchGroup(key, g);
-    return;
+  const active = state.activeGroupKey === g.key;
+  let promo = "";
+  if (g.key !== "singles") {
+    const items = state.queue.filter((i) => g.ids.includes(i.id));
+    const nPromo = items.filter((i) => i.promo).length;
+    if (items.length && nPromo / items.length > 0.5) {
+      promo = `<span class="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:text-amber-300">PROMO</span>`;
+    }
   }
-  box.innerHTML = (cache.summaries || []).map(groupEmailRow).join("") + `
-    ${cache.truncated ? `<div class="px-1 text-[10px] text-slate-500 dark:text-slate-600">Only the first 15 emails of this group are shown.</div>` : ""}
-    <button data-del="${esc(key)}" class="w-full rounded-lg bg-red-500/85 px-2 py-1.5 text-[11px] font-bold text-white hover:bg-red-500 transition">
-      Delete all ${g ? g.ids.length : cache.count} emails from sender
-    </button>`;
-  box.querySelectorAll("[data-goto]").forEach((r) => r.addEventListener("click", () => gotoEmail(r.dataset.goto)));
-  box.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const id = b.dataset.id;
-    if (b.dataset.act === "keep") keepEmail(id);
-    else actOn(b.dataset.act, id);
-  }));
-  box.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); bulkAction("trash", b.dataset.del); }));
-}
-
-function groupEmailRow(s) {
-  const promo = s.promo
-    ? `<span class="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:text-amber-300">PROMO</span>`
-    : "";
-  const preview = s.preview
-    ? `<p class="mt-1 text-[11px] text-slate-500 dark:text-slate-500 line-clamp-3">${esc(s.preview)}</p>`
-    : "";
   return `
-    <div class="rounded-lg bg-slate-100 dark:bg-slate-800/60 px-2.5 py-2 transition hover:bg-slate-200 dark:hover:bg-slate-700/60 group-row">
-      <div class="flex items-center gap-2 cursor-pointer" data-goto="${esc(s.id)}">
-        <p class="min-w-0 flex-1 text-[11px] font-bold text-slate-700 dark:text-slate-300 truncate">${esc(s.subject || "(no subject)")}</p>
-        ${promo}
-      </div>
-      <div class="mt-1 cursor-pointer" data-goto="${esc(s.id)}">
-        <p class="text-xs text-slate-600 dark:text-slate-400">${esc(s.one_liner || "")}</p>
-        <ul class="mt-1 space-y-0.5 text-[11px] text-slate-500 dark:text-slate-500">
-          ${(s.bullets || []).map((b) => `<li class="flex gap-1.5"><span class="text-violet-500">▸</span><span>${esc(b)}</span></li>`).join("")}
-        </ul>
-        ${preview}
-      </div>
-      <div class="mt-2 flex items-center gap-1.5">
-        <button data-act="archive" data-id="${esc(s.id)}" class="rounded bg-emerald-500/15 px-2 py-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/30 transition">Archive</button>
-        <button data-act="trash" data-id="${esc(s.id)}" class="rounded bg-red-500/15 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition">Delete</button>
-        <button data-act="keep" data-id="${esc(s.id)}" class="rounded bg-slate-500/15 px-2 py-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-500/30 transition">Keep</button>
-        <span class="ml-auto text-[9px] text-slate-400 dark:text-slate-600">click to open</span>
-      </div>
-    </div>`;
+    <li class="group-row rounded-lg border ${active ? "border-violet-500/60 bg-violet-500/10" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60"} px-3 py-2 flex items-center gap-2 cursor-pointer select-none transition hover:bg-slate-100 dark:hover:bg-slate-800/70" data-group="${esc(g.key)}"${active ? ` data-active="yes"` : ""}>
+      <p class="min-w-0 flex-1 text-[13px] font-semibold ${active ? "text-violet-800 dark:text-violet-200" : "text-slate-800 dark:text-slate-200"} truncate">${esc(g.label)}</p>
+      ${promo}
+      <span class="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">${g.ids.length}</span>
+    </li>`;
 }
 
 async function fetchGroup(key, g) {
   if (state.groupCache.has(key) || state.groupFetching.has(key)) return;
   state.groupFetching.add(key);
+  renderGroupView();
   try {
     const res = await api(`/api/groups/${encodeURIComponent(key)}/summarize`, {
       method: "POST",
       body: JSON.stringify({ message_ids: g.ids, label: g.label }),
     });
     state.groupCache.set(key, res);
+    mergeGroupSummaries(res);
   } catch (e) {
     toast(`Group summary failed: ${e.message}`, "err", { duration: 4000 });
   } finally {
     state.groupFetching.delete(key);
   }
-  paintGroup(key);
+  renderGroupView();
 }
 
-function toggleGroup(key) {
-  if (state.expandedGroups.has(key)) state.expandedGroups.delete(key);
-  else state.expandedGroups.add(key);
-  renderGroups();
+function mergeGroupSummaries(res) {
+  const byId = new Map((res.summaries || []).map((s) => [s.id, s]));
+  for (const it of state.queue) {
+    const s = byId.get(it.id);
+    if (!s) continue;
+    if (it.summary && it.summary.one_liner) continue;
+    it.summary = {
+      one_liner: s.one_liner || "",
+      bullets: Array.isArray(s.bullets) ? s.bullets : [],
+      category: s.category || "Unclear",
+      action_needed: s.action_needed || "nothing",
+      money: s.money || "",
+      is_politics: !!s.is_politics,
+      opinion_bias: s.opinion_bias || "neutral",
+      ai_eng_relevance: s.ai_eng_relevance || "",
+      mock: !!s.mock,
+    };
+    if (s.preview) it.preview = s.preview;
+  }
 }
 
-function gotoEmail(id) {
-  const idx = state.queue.findIndex((i) => i.id === id);
-  if (idx === -1) { toast("That email is no longer in the queue", "err", { duration: 2000 }); return; }
-  state.index = idx;
-  showItem();
+function selectGroup(key) {
+  state.activeGroupKey = key;
+  state.expandedCardId = null;
+  renderSidebar();
+  renderGroupView();
 }
+
+/* ───────────────────────────── Group view (middle pane) ──────────── */
+function renderGroupView() {
+  const key = state.activeGroupKey;
+  el.groupHeader.classList.toggle("hidden", key === null);
+  if (key === null) {
+    el.emailCards.innerHTML = `<p class="text-sm text-slate-500 dark:text-slate-600 p-6">Pick a group on the left, or load more from the inbox.</p>`;
+    return;
+  }
+  if (key === "singles") {
+    state.visibleEmails = state.queue.filter((i) => (i.bundle_count || 1) <= 1);
+  } else {
+    state.visibleEmails = state.queue.filter((i) => i.bundle_key === key && (i.bundle_count || 1) > 1);
+    const g = currentGroups().find((x) => x.key === key);
+    if (g && !state.groupCache.has(key)) fetchGroup(key, g);
+  }
+  let visible = state.visibleEmails;
+  if (state.activeCategory !== "all") {
+    visible = visible.filter((it) => emailCategory(it) === state.activeCategory);
+  }
+  const first = key === "singles" ? null : state.queue.find((i) => i.bundle_key === key);
+  const gs = key !== "singles" ? state.groupCache.get(key) : null;
+  let overview = "";
+  if (key === "singles") {
+    el.groupTitle.textContent = "Singles";
+    el.groupCount.textContent = `${visible.length} email${visible.length === 1 ? "" : "s"}`;
+    el.bulkDeleteBtn.classList.add("hidden");
+    el.bulkArchiveBtn.classList.add("hidden");
+  } else {
+    el.groupTitle.textContent = (first && (first.bundle_sender_name || first.sender_name)) || key;
+    el.groupCount.textContent = `${visible.length} email${visible.length === 1 ? "" : "s"}`;
+    el.bulkDeleteBtn.classList.remove("hidden");
+    el.bulkArchiveBtn.classList.remove("hidden");
+  }
+  if (key !== "singles") {
+    if (state.groupFetching.has(key)) {
+      overview = "Summarizing with gemma3:4b…";
+    } else if (gs && gs.overview) {
+      overview = gs.overview;
+      if (gs.flags && gs.flags.length) overview += "  " + gs.flags.map((f) => `· ${f}`).join("  ");
+    }
+  }
+  el.groupOverview.textContent = overview;
+  el.emailCards.innerHTML = visible.length
+    ? visible.map(emailCard).join("")
+    : `<p class="text-sm text-slate-500 dark:text-slate-600 p-6">${state.activeCategory !== "all" ? "No emails match this category." : "This group is empty now."}</p>`;
+
+  if (key === "singles") {
+    scheduleSingleSummarize(visible.filter((it) => !(it.summary && it.summary.one_liner)).slice(0, 30).map((it) => it.id));
+  } else if (singleSummQueue.length) {
+    singleSummQueue.length = 0;
+  }
+}
+
+function emailCategory(it) { return (it.summary && it.summary.category) || it.category || ""; }
+
+function tokenPill(s) {
+  if (!s) return "";
+  if (s.mock) {
+    return `<span class="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-300">OFFLINE FALLBACK</span>`;
+  }
+  if (!s.tokens_in && !s.tokens_out) return "";
+  return `<span class="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">in ${s.tokens_in || 0} tok · out ${s.tokens_out || 0} tok · ${((s.latency_ms || 0) / 1000).toFixed(1)}s</span>`;
+}
+
+function emailCard(it) {
+  const sum = it.summary || {};
+  const cat = emailCategory(it);
+  const expanded = state.expandedCardId === it.id;
+  const sender = it.sender_name || it.sender_email || "Unknown sender";
+  const politics = !!(it.is_politics || sum.is_politics);
+
+  const categoryChip = cat
+    ? `<span class="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[9px] font-bold text-violet-700 dark:text-violet-300">${esc(cat)}</span>` : "";
+  const promoBadge = it.promo
+    ? `<span class="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:text-amber-300">PROMO</span>` : "";
+
+  let summaryHTML;
+  if (sum.one_liner) {
+    const bullets = (sum.bullets || []).length
+      ? `<ul class="mt-1 space-y-0.5 text-[11px] text-slate-500 dark:text-slate-500">${sum.bullets.map((b) => `<li class="flex gap-1.5"><span class="text-violet-500">▸</span><span>${esc(b)}</span></li>`).join("")}</ul>` : "";
+    summaryHTML = `<div class="mt-1.5 flex items-center gap-2 flex-wrap"><p class="text-xs text-slate-600 dark:text-slate-400">${esc(sum.one_liner)}</p>${tokenPill(sum)}</div>${bullets}`;
+  } else {
+    summaryHTML = `<div class="mt-2 shimmer h-4 w-full"></div>`;
+  }
+
+  const previewHTML = it.preview
+    ? `<p class="mt-1 text-[11px] text-slate-500 dark:text-slate-500 line-clamp-3">${esc(it.preview)}</p>` : "";
+
+  const badges = [];
+  if (sum.action_needed === "pay") badges.push(`<span class="rounded bg-red-500/15 px-1.5 py-0.5 text-[9px] font-bold text-red-700 dark:text-red-300">PAYMENT</span>`);
+  if (sum.action_needed === "respond" || sum.action_needed === "review") badges.push(`<span class="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:text-amber-300">${esc(sum.action_needed.toUpperCase())}</span>`);
+  if (sum.money) badges.push(`<span class="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700 dark:text-emerald-300 max-w-[180px] truncate">${esc(sum.money)}</span>`);
+  if (sum.opinion_bias === "negative" || sum.opinion_bias === "biased") badges.push(`<span class="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:text-amber-300">−ve opinions</span>`);
+  if (sum.ai_eng_relevance) badges.push(`<span class="rounded bg-violet-500/15 px-1.5 py-0.5 text-[9px] font-bold text-violet-700 dark:text-violet-300">AI/ENG</span>`);
+  if (politics) badges.push(`<span class="rounded bg-slate-500/15 px-1.5 py-0.5 text-[9px] font-bold text-slate-600 dark:text-slate-400">POLITICS (ignored)</span>`);
+  const badgesHTML = badges.length ? `<div class="mt-1.5 flex items-center gap-1 flex-wrap">${badges.join("")}</div>` : "";
+
+  const btns = `
+    <button data-cardact="archive" data-id="${esc(it.id)}" class="rounded bg-emerald-500/15 px-2 py-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/30 transition">Archive</button>
+    <button data-cardact="trash" data-id="${esc(it.id)}" class="rounded bg-red-500/15 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition">Delete</button>
+    <button data-cardact="star" data-id="${esc(it.id)}" class="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition">Star</button>
+    <button data-cardact="skip" data-id="${esc(it.id)}" class="rounded bg-slate-500/15 px-2 py-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-500/30 transition">Skip</button>
+    <button data-cardact="keep" data-id="${esc(it.id)}" class="rounded bg-slate-500/15 px-2 py-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-500/30 transition">Keep</button>
+    <button data-cardact="block" data-id="${esc(it.id)}" data-email="${esc(it.sender_email || "")}" data-name="${esc(sender)}" class="rounded bg-red-500/15 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition">Block</button>
+    ${it.promo ? `<button data-cardact="promoblock" data-id="${esc(it.id)}" data-email="${esc(it.sender_email || "")}" data-name="${esc(sender)}" class="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition">Auto-del promos</button>` : ""}`;
+
+  return `
+    <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-3 transition group-card ${politics ? "opacity-60" : ""}" data-expand="${esc(it.id)}" data-expanded="${expanded}">
+      <div class="flex items-center gap-2 flex-wrap cursor-pointer" data-expand="${esc(it.id)}">
+        ${categoryChip} ${promoBadge}
+        <p class="min-w-0 flex-1 text-sm font-bold text-slate-800 dark:text-slate-200 truncate">${esc(it.subject || "(no subject)")}</p>
+      </div>
+      ${summaryHTML}
+      ${previewHTML}
+      ${badgesHTML}
+      <div class="mt-2 flex items-center gap-1.5 flex-wrap">
+        ${btns}
+        <span class="ml-auto text-[10px] text-slate-400 dark:text-slate-600 cursor-pointer" data-expand="${esc(it.id)}">${expanded ? "collapse ▴" : "open ▾"}</span>
+      </div>
+      ${expanded ? detailHTML(it) : ""}
+    </div>`;
+}
+
+function detailHTML(it) {
+  const d = state.detail.get(it.id);
+  if (!d) fetchDetail(it.id);
+  const sum = (d && d.summary) || null;
+  const sender = (d && d.sender_email) || it.sender_email || "";
+  const dateMs = (d && d.internal_date_ms) || it.internal_date_ms;
+  const date = dateMs ? timeAgo(new Date(dateMs).toISOString()) : "";
+  const bodyHTML = !d
+    ? `<div class="mt-2 shimmer h-4 w-full"></div><div class="mt-2 shimmer h-4 w-3/4"></div><div class="mt-2 shimmer h-4 w-5/6"></div>`
+    : d.body_text
+      ? `<div class="email-body mt-2 text-sm text-slate-700 dark:text-slate-300">${linkify(d.body_text)}</div>${d.body_truncated ? `<p class="mt-2 text-xs text-amber-600 dark:text-amber-400/80">Body truncated at 80k chars for speed.</p>` : ""}`
+      : `<div class="email-body mt-2 text-sm text-slate-700 dark:text-slate-300">(no extractable text)</div>`;
+  const sumBlock = sum && sum.one_liner
+    ? `<div class="mt-2.5 rounded-lg bg-violet-500/10 border border-violet-500/25 px-3 py-2 text-xs text-violet-900 dark:text-violet-100">
+        <span class="font-bold text-violet-700 dark:text-violet-300">AI summary</span>
+        <p class="mt-0.5 text-violet-900/90 dark:text-violet-100/90">${esc(sum.one_liner)}</p>
+        ${sum.bullets && sum.bullets.length ? `<ul class="mt-1 space-y-0.5 text-[11px] text-violet-900/70 dark:text-violet-100/70">${sum.bullets.map((b) => `<li class="flex gap-1.5"><span class="text-violet-500">▸</span><span>${esc(b)}</span></li>`).join("")}</ul>` : ""}
+      </div>` : "";
+  return `
+    <div class="mt-3 border-t border-slate-200 dark:border-slate-800 pt-3">
+      <div class="flex items-center gap-2 flex-wrap text-[11px] text-slate-500 dark:text-slate-400">
+        <span class="font-mono truncate">${esc(sender)}</span>
+        <span>·</span>
+        <span>${esc(date)}</span>
+        ${tokenPill(sum)}
+      </div>
+      ${sumBlock}
+      ${bodyHTML}
+      <div class="mt-2 flex items-center gap-1.5">
+        <button data-cardact="block" data-id="${esc(it.id)}" data-email="${esc(it.sender_email || "")}" data-name="${esc(sender)}" class="rounded bg-red-500/15 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition">Block sender</button>
+        ${it.promo ? `<button data-cardact="promoblock" data-id="${esc(it.id)}" data-email="${esc(it.sender_email || "")}" data-name="${esc(sender)}" class="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition">Auto-del promos</button>` : ""}
+      </div>
+    </div>`;
+}
+
+function currentItemOf(id) { return state.queue.find((i) => i.id === id); }
 
 /* ───────────────────────────── Actions ─────────────────────────── */
-function doAction(action) {
-  const item = currentItem();
-  if (item) actOn(action, item.id);
-}
-
 async function actOn(action, id) {
   if (state.busy) return;
   const item = state.queue.find((i) => i.id === id);
@@ -670,35 +869,73 @@ function keepEmail(id) {
   renderSidebar();
   toast("Kept in inbox · removed from batch", "info", { duration: 1600 });
   if (state.queue.length === 0) { showEmpty(); return; }
-  showItem();
+  renderGroupView();
 }
 
-async function bulkAction(action, bundleKey) {
-  if (state.busy) return;
-  const items = state.queue.filter((i) => i.bundle_key === bundleKey && i.bundle_count > 1);
-  if (!items.length) return;
-  state.busy = true;
-  const ids = items.map((i) => i.id);
-  try {
-    const res = await api(`/api/bundles/${encodeURIComponent(bundleKey)}/${action}`, {
-      method: "POST",
-      body: JSON.stringify({ message_ids: ids }),
-    });
-    ids.forEach((id) => state.detail.delete(id));
-    state.queue = state.queue.filter((i) => !ids.includes(i.id));
-    invalidateGroups();
-    if (state.index >= state.queue.length) state.index = Math.max(0, state.queue.length - 1);
-    const failedN = (res.failed || []).length;
-    if (failedN) toast(`${failedN} failed — retry`, "err", { duration: 4000 });
-    pushHistory(action, ids.filter((id) => !(res.failed || []).includes(id)), items);
-    toast(`${actionLabel(action)} ${ids.length} emails · synced to Gmail`, "ok", { undo: true });
-    if (state.queue.length === 0) { showEmpty(); return; }
-    await showItem();
-  } catch (e) {
-    toast(`Bulk ${action} failed: ${e.message}`, "err", { duration: 4000 });
-  } finally {
-    state.busy = false;
+function restoreToQueue(items) {
+  state.queue.push(...items);
+  state.queue.sort((a, b) => (b.internal_date_ms || 0) - (a.internal_date_ms || 0));
+  invalidateGroups();
+}
+
+function queueBulk(action, groupKey) {
+  if (!groupKey || groupKey === "singles") return;
+  if (state.pendingOps.some((o) => o.groupKey === groupKey && o.status !== "done")) {
+    toast("Already processing", "info", { duration: 1500 });
+    return;
   }
+  const affected = state.queue.filter((i) => i.bundle_key === groupKey && (i.bundle_count || 1) > 1);
+  const ids = affected.map((i) => i.id);
+  if (!ids.length) {
+    toast(action === "trash" ? "Nothing to delete here" : "Nothing to archive here", "info", { duration: 1600 });
+    return;
+  }
+  const first = affected[0];
+  const sender = first.bundle_sender_name || first.sender_name || groupKey;
+  const label = `${action === "trash" ? "Trash" : "Archive"} «${sender}» (${ids.length} email${ids.length === 1 ? "" : "s"})`;
+  const idSet = new Set(ids);
+
+  state.queue = state.queue.filter((i) => !idSet.has(i.id));
+  ids.forEach((id) => state.detail.delete(id));
+  invalidateGroups();
+  state.expandedCardId = null;
+  renderSidebar();
+  renderGroupView();
+
+  const op = {
+    id: (window.crypto && typeof window.crypto.randomUUID === "function" ? window.crypto.randomUUID() : String(Date.now()) + "-" + Math.random()),
+    action,
+    groupKey,
+    label,
+    count: ids.length,
+    status: "running",
+    ts: Date.now(),
+  };
+  state.pendingOps.unshift(op);
+  if (state.pendingOps.length > 20) state.pendingOps.length = 20;
+  renderPendingOps();
+
+  api(`/api/bundles/${encodeURIComponent(groupKey)}/${action}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message_ids: ids }),
+  })
+    .then((res) => {
+      const failedN = (res.failed || []).length;
+      if (failedN) toast(`${failedN} email${failedN === 1 ? "" : "s"} failed — retry`, "err", { duration: 4000 });
+      op.status = "done";
+      renderPendingOps();
+      scheduleOpRemoval(op);
+    })
+    .catch((e) => {
+      op.status = "failed";
+      renderPendingOps();
+      restoreToQueue(affected);
+      renderSidebar();
+      renderGroupView();
+      toast(`Bulk ${action === "trash" ? "delete" : "archive"} failed — emails restored`, "err", { duration: 4000 });
+      scheduleOpRemoval(op);
+    });
 }
 
 function actionLabel(action) {
@@ -714,7 +951,7 @@ function removeFromQueue(id) {
   if (state.index >= state.queue.length) state.index = Math.max(0, state.queue.length - 1);
   renderSidebar();
   if (state.queue.length === 0) { showEmpty(); return; }
-  showItem();
+  renderGroupView();
 }
 
 function invalidateGroups() {
@@ -722,17 +959,16 @@ function invalidateGroups() {
   state.groupCache.clear();
 }
 
-function skip(delta) {
-  const next = state.index + delta;
-  if (next < 0 || next >= state.queue.length) { toast(delta > 0 ? "End of queue" : "Already at start", "info", { duration: 1200 }); return; }
-  state.index = next;
-  showItem();
+async function skipForNow(id) {
+  const target = id ?? currentTargetId();
+  if (!target) { toast("Nothing to skip — open a group first", "info", { duration: 1600 }); return; }
+  const item = currentItemOf(target);
+  if (!item) { toast("That email is no longer in the queue", "err", { duration: 2000 }); return; }
+  removeAndSkip(item);
 }
 
-async function skipForNow() {
-  if (state.busy) return;
-  const item = currentItem();
-  if (!item) return;
+async function removeAndSkip(item) {
+  if (state.busy || !item) return;
   state.busy = true;
   try {
     await api("/api/skipped/add", { method: "POST", body: JSON.stringify({ item }) });
@@ -744,8 +980,8 @@ async function skipForNow() {
     invalidateGroups();
     if (state.index >= state.queue.length) state.index = Math.max(0, state.queue.length - 1);
     renderSidebar();
-    if (state.queue.length === 0) { renderSidebar(); showEmpty(); return; }
-    showItem();
+    if (state.queue.length === 0) { showEmpty(); return; }
+    renderGroupView();
     toast("Skipped for now — hidden until you bring it back", "info", {
       undo: true, undoFn: () => restoreSkipped(item.id), duration: 3600,
     });
@@ -755,6 +991,8 @@ async function skipForNow() {
     state.busy = false;
   }
 }
+
+function skipForNowById(id) { removeAndSkip(currentItemOf(id)); }
 
 async function restoreSkipped(id) {
   const idx = state.skippedItems.findIndex((i) => i.id === id);
@@ -771,7 +1009,7 @@ async function restoreSkipped(id) {
   invalidateGroups();
   renderSidebar();
   if (state.queue.length === 0) { showEmpty(); return; }
-  showItem();
+  renderGroupView();
   toast("Back in the batch", "ok", { duration: 1800 });
 }
 
@@ -788,7 +1026,7 @@ async function restoreAllSkipped() {
   invalidateGroups();
   renderSidebar();
   if (state.queue.length === 0) { showEmpty(); return; }
-  showItem();
+  renderGroupView();
   toast(`Brought back ${items.length} skipped email${items.length === 1 ? "" : "s"}`, "ok", { duration: 2200 });
 }
 
@@ -815,7 +1053,7 @@ async function blockSender(email, senderName) {
     const purged = res.purged || 0;
     toast(`Blocked ${senderName || norm} · purged ${purged} unread, auto-deletes the rest forever`, "ok", { duration: 3800 });
     if (state.queue.length === 0) { showEmpty(); return; }
-    showItem();
+    renderGroupView();
   } catch (e) {
     toast(`Block failed: ${e.message}`, "err", { duration: 4000 });
   } finally {
@@ -833,6 +1071,55 @@ async function unblockSender(email) {
   state.blockedSenders = state.blockedSenders.filter((b) => b.email !== email);
   renderSidebar();
   toast("Unblocked — matches from this sender will appear again", "info", { duration: 2400 });
+}
+
+async function promoBlockSender(email, senderName) {
+  if (state.busy) return;
+  state.busy = true;
+  const norm = (email || "").toLowerCase();
+  if (!norm) { toast("This email has no sender address to mark", "err", { duration: 2200 }); state.busy = false; return; }
+  try {
+    const res = await api("/api/promo-blocked/add", {
+      method: "POST", body: JSON.stringify({ sender_email: norm, sender_name: senderName }),
+    });
+    if (!state.promoBlockedSenders.some((b) => b.email === norm)) {
+      state.promoBlockedSenders.push({ email: norm, sender_name: senderName || "" });
+    }
+    // The server trashed the vendor's currently-unread PROMO mail; drop those locally.
+    const doomedIds = new Set(state.queue.filter((i) =>
+      (i.sender_email || "").toLowerCase() === norm && i.promo
+    ).map((i) => i.id));
+    doomedIds.forEach((id) => state.detail.delete(id));
+    state.queue = state.queue.filter((i) => !doomedIds.has(i.id));
+    state.skippedItems = state.skippedItems.filter((i) =>
+      (i.sender_email || "").toLowerCase() !== norm || !i.promo
+    );
+    state.skippedIds = new Set(state.skippedItems.map((i) => i.id));
+    if (state.index >= state.queue.length) state.index = Math.max(0, state.queue.length - 1);
+    invalidateGroups();
+    renderSidebar();
+    const purged = res.purged || 0;
+    const skippedN = res.skipped || 0;
+    toast(`Promo auto-delete ON for ${senderName || norm} · purged ${purged} promos now, future promos deleted (${skippedN} non-promo kept)`, "ok", { duration: 4200 });
+    if (state.queue.length === 0) { showEmpty(); return; }
+    renderGroupView();
+  } catch (e) {
+    toast(`Promo auto-delete failed: ${e.message}`, "err", { duration: 4000 });
+  } finally {
+    state.busy = false;
+  }
+}
+
+async function unpromoBlockSender(email) {
+  try {
+    await api("/api/promo-blocked/remove", { method: "POST", body: JSON.stringify({ sender_email: email }) });
+  } catch (e) {
+    toast(`Failed to disable promo auto-delete: ${e.message}`, "err", { duration: 3000 });
+    return;
+  }
+  state.promoBlockedSenders = state.promoBlockedSenders.filter((b) => b.email !== email);
+  renderSidebar();
+  toast("Promo auto-delete OFF — promos from this vendor will appear again", "info", { duration: 2400 });
 }
 
 /* ───────────────────────────── History / undo ──────────────────── */
@@ -871,7 +1158,7 @@ async function undoEntry(h, i) {
     state.queue.splice(state.index, 0, ...restoredItems);
     invalidateGroups();
     renderSidebar();
-    await showItem();
+    renderGroupView();
     toast(`Restored ${restoredItems.length} email${restoredItems.length === 1 ? "" : "s"} · synced to Gmail`, "ok");
   } catch (e) {
     toast(`Undo failed: ${e.message}`, "err", { duration: 4000 });
@@ -881,6 +1168,45 @@ async function undoEntry(h, i) {
 }
 
 /* ───────────────────────────── Keyboard ────────────────────────── */
+function currentTargetId() {
+  if (state.expandedCardId) return state.expandedCardId;
+  if (state.visibleEmails && state.visibleEmails.length) return state.visibleEmails[0].id;
+  return null;
+}
+function currentTargetItem() {
+  const id = currentTargetId();
+  return id ? currentItemOf(id) : null;
+}
+function doAction(action) {
+  const id = currentTargetId();
+  if (!id) { toast("Open a group to act on emails", "info", { duration: 1600 }); return; }
+  actOn(action, id);
+}
+function issueBlock() {
+  const it = currentTargetItem();
+  if (it && it.sender_email) blockSender(it.sender_email, it.sender_name);
+  else toast("This email has no sender address to block", "err", { duration: 2200 });
+}
+function issuePromoBlock() {
+  const it = currentTargetItem();
+  if (!it || !it.sender_email) { toast("This email has no sender address to mark", "err", { duration: 2200 }); return; }
+  if (!it.promo) { toast("Only promo emails can be marked for auto-delete (use Block for the whole sender)", "err", { duration: 2600 }); return; }
+  promoBlockSender(it.sender_email, it.sender_name);
+}
+function groupKeys() {
+  const keys = [];
+  const singleCount = state.queue.filter((i) => (i.bundle_count || 1) <= 1).length;
+  if (singleCount) keys.push("singles");
+  currentGroups().forEach((g) => keys.push(g.key));
+  return keys;
+}
+function stepGroup(dir) {
+  const keys = groupKeys();
+  if (!keys.length) { toast("No groups to switch", "info", { duration: 1600 }); return; }
+  const cur = state.activeGroupKey;
+  const idx = cur === null ? (dir > 0 ? -1 : 0) : keys.indexOf(cur);
+  selectGroup(keys[((idx + dir) % keys.length + keys.length) % keys.length]);
+}
 window.addEventListener("keydown", (e) => {
   const t = e.target;
   if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
@@ -898,15 +1224,15 @@ window.addEventListener("keydown", (e) => {
     case "s":
       e.preventDefault(); doAction("star"); break;
     case "arrowright":
-      e.preventDefault(); skip(1); break;
+      e.preventDefault(); stepGroup(1); break;
     case "arrowleft":
-      e.preventDefault(); skip(-1); break;
+      e.preventDefault(); stepGroup(-1); break;
     case "x":
-      e.preventDefault(); skipForNow(); break;
+      e.preventDefault(); skipForNow(currentTargetId()); break;
     case "b":
-      e.preventDefault();
-      { const it = currentItem(); if (it && it.sender_email) blockSender(it.sender_email, it.sender_name); else toast("This email has no sender address to block", "err", { duration: 2200 }); }
-      break;
+      e.preventDefault(); issueBlock(); break;
+    case "p":
+      e.preventDefault(); issuePromoBlock(); break;
     case "u":
       e.preventDefault(); undoLast(); break;
     case "enter":
@@ -940,23 +1266,61 @@ el.clearCacheBtn.addEventListener("click", async () => {
 });
 el.undoTopBtn.addEventListener("click", undoLast);
 el.themeBtn.addEventListener("click", toggleTheme);
-el.skipForNowBtn.addEventListener("click", skipForNow);
+el.skipForNowBtn.addEventListener("click", () => skipForNow());
 el.skippedBtn.addEventListener("click", restoreAllSkipped);
 el.skippedRestoreBtn.addEventListener("click", restoreAllSkipped);
 el.blockedBtn.addEventListener("click", () => { state.showBlockedList = !state.showBlockedList; renderSidebar(); });
+el.promoBlockedBtn.addEventListener("click", () => { state.showPromoBlockedList = !state.showPromoBlockedList; renderSidebar(); });
 applyThemeUI();
-el.bundleDeleteBtn.addEventListener("click", () => { const i = currentItem(); if (i) bulkAction("trash", i.bundle_key); });
-el.bundleArchiveBtn.addEventListener("click", () => { const i = currentItem(); if (i) bulkAction("archive", i.bundle_key); });
+el.bulkDeleteBtn.addEventListener("click", () => { if (state.activeGroupKey && state.activeGroupKey !== "singles") queueBulk("trash", state.activeGroupKey); else toast("Open a group to bulk delete", "info", { duration: 1600 }); });
+el.bulkArchiveBtn.addEventListener("click", () => { if (state.activeGroupKey && state.activeGroupKey !== "singles") queueBulk("archive", state.activeGroupKey); else toast("Open a group to bulk archive", "info", { duration: 1600 }); });
 el.groupList.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-toggle]");
-  if (t) toggleGroup(t.dataset.toggle);
+  const t = e.target.closest("[data-group]");
+  if (t) selectGroup(t.dataset.group);
+});
+
+el.categoryAddBtn.addEventListener("click", addCategory);
+el.categoryInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); addCategory(); }
+});
+el.categoryChips.addEventListener("click", (e) => {
+  const rm = e.target.closest("[data-catremove]");
+  if (rm) { removeCategory(rm.dataset.catremove); return; }
+  const chip = e.target.closest("[data-cat]");
+  if (chip) {
+    state.activeCategory = chip.dataset.cat;
+    renderCategoryChips();
+    renderGroupView();
+  }
+});
+
+el.emailCards.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-expand]");
+  if (!t || e.target.closest("button")) return;
+  const id = t.dataset.expand;
+  state.expandedCardId = state.expandedCardId === id ? null : id;
+  renderGroupView();
+});
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-cardact]");
+  if (!b) return;
+  const id = b.dataset.id;
+  const act = b.dataset.cardact;
+  if (act === "skip") skipForNowById(id);
+  else if (act === "block") blockSender(b.dataset.email || (currentItemOf(id) || {}).sender_email || "", b.dataset.name);
+  else if (act === "promoblock") promoBlockSender(b.dataset.email || (currentItemOf(id) || {}).sender_email || "", b.dataset.name);
+  else if (act === "keep") keepEmail(id);
+  else actOn(act, id);
 });
 
 document.addEventListener("click", (e) => {
   const bs = e.target.closest("[data-blocksender]");
   if (bs) { blockSender(bs.dataset.blocksender, bs.dataset.blocksendername); return; }
   const ub = e.target.closest("[data-unblock]");
-  if (ub) { unblockSender(ub.dataset.unblock); }
+  if (ub) { unblockSender(ub.dataset.unblock); return; }
+  const upb = e.target.closest("[data-unpromoblock]");
+  if (upb) { unpromoBlockSender(upb.dataset.unpromoblock); }
 });
 
 document.addEventListener("visibilitychange", () => {

@@ -105,13 +105,20 @@ def api_queue(max_results: int = config.DEFAULT_BATCH, page_token: str | None = 
     items, bundles, next_page_token = _run(queue_module.build_queue, service, max_results, page_token)
 
     # Auto-delete: any message from a persisted blocked sender is trashed now and
-    # never surfaced, so new mail from them disappears on every pull.
+    # never surfaced, so new mail from them disappears on every pull. Promo-only
+    # vendors ("promo auto-delete") are trashed only when the mail is PROMO-labelled.
     blocked = {b["email"] for b in store.list_blocked()}
+    promo_blocked = {b["email"] for b in store.list_promo_blocked()}
     kept: list[dict] = []
     doomed: list[dict] = []
     for item in items:
         email = (item.get("sender_email") or "").strip().lower()
-        if email and email in blocked:
+        if not email:
+            kept.append(item)
+            continue
+        if email in blocked:
+            doomed.append(item)
+        elif email in promo_blocked and item.get("promo"):
             doomed.append(item)
         else:
             kept.append(item)
@@ -133,6 +140,8 @@ def api_queue(max_results: int = config.DEFAULT_BATCH, page_token: str | None = 
                 item["summary"] = cached["summary"]
             if cached.get("body_text"):
                 item["body_cached"] = True
+            if cached.get("category"):
+                item["category"] = cached["category"]
     return {
         "total": len(items),
         "items": items,
@@ -251,6 +260,70 @@ def api_blocked_clear():
     return {"ok": True, "cleared": cleared}
 
 
+# --- Promo auto-delete (blocked-for-promos-only) ---------------------------------
+
+@app.get("/api/promo-blocked")
+def api_promo_blocked():
+    return {"items": store.list_promo_blocked()}
+
+
+@app.post("/api/promo-blocked/add")
+def api_promo_blocked_add(req: BlockedAddRequest):
+    service = require_service()
+    email = (req.sender_email or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="sender_email required")
+    store.add_promo_blocked(email, req.sender_name)
+    # Purge already-unread PROMO mail from this vendor right now (not just future mail).
+    # Non-promo mail from them is left alone so real messages still surface.
+    ids = _run(gmail_service.list_sender_unread_ids, service, email)
+    promo_ids: list[str] = []
+    if ids:
+        metas = _run(gmail_service.get_metadata_batch, service, ids)
+        promo_ids = [m["id"] for m in metas if m.get("promo")]
+    failed = gmail_service.bulk_execute(service, promo_ids, gmail_service.trash) if promo_ids else []
+    for mid in promo_ids:
+        if mid not in failed:
+            store.remove_skipped(mid)  # a promo-deleted sender can't stay "skipped"
+    return {"ok": True, "purged": len(promo_ids) - len(failed), "skipped": len(ids) - len(promo_ids), "failed": len(failed)}
+
+
+@app.post("/api/promo-blocked/remove")
+def api_promo_blocked_remove(req: BlockedRemoveRequest):
+    email = (req.sender_email or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="sender_email required")
+    store.remove_promo_blocked(email)
+    return {"ok": True}
+
+
+# --- Categories ------------------------------------------------------------
+
+class CategoryAddRequest(BaseModel):
+    name: str
+
+
+class CategoryRemoveRequest(BaseModel):
+    name: str
+
+
+@app.get("/api/categories")
+def api_categories():
+    return {"items": store.get_categories()}
+
+
+@app.post("/api/categories/add")
+def api_category_add(req: CategoryAddRequest):
+    items = store.add_category(req.name)
+    return {"ok": True, "items": items}
+
+
+@app.post("/api/categories/remove")
+def api_category_remove(req: CategoryRemoveRequest):
+    items = store.remove_category(req.name)
+    return {"ok": True, "items": items}
+
+
 # --- Grouped-sender summaries -------------------------------------------------
 
 class GroupSummarizeRequest(BaseModel):
@@ -357,6 +430,15 @@ def api_undo(req: UndoRequest):
 # --- Static -------------------------------------------------------------------
 
 app.mount("/static", StaticFiles(directory=str(config.STATIC_DIR)), name="static")
+
+
+@app.middleware("http")
+async def no_cache_static(request, call_next):
+    """Bust stale browser caches for dev assets: always revalidate /static."""
+    response = await call_next(request)
+    if request.url.path.startswith("/static"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @app.get("/", include_in_schema=False)

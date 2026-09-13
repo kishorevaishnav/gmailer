@@ -10,35 +10,19 @@ html, body {
   overscroll-behavior: none;
 }
 
-#viewport, #emailBodyBox {
+#viewport {
   scrollbar-width: thin;
   scrollbar-color: var(--scroll-thumb) transparent;
 }
-#viewport::-webkit-scrollbar, #emailBodyBox::-webkit-scrollbar {
+#viewport::-webkit-scrollbar {
   width: 8px;
 }
-#viewport::-webkit-scrollbar-thumb, #emailBodyBox::-webkit-scrollbar-thumb {
+#viewport::-webkit-scrollbar-thumb {
   background: var(--scroll-thumb);
   border-radius: 8px;
 }
-#viewport::-webkit-scrollbar-track, #emailBodyBox::-webkit-scrollbar-track {
+#viewport::-webkit-scrollbar-track {
   background: transparent;
-}
-
-/* Stage slide transitions */
-#stage {
-  transition: transform 160ms cubic-bezier(.4,0,.2,1), opacity 160ms ease;
-}
-#stage.slide-out {
-  transform: translateX(-115%);
-  opacity: 0;
-}
-#stage.slide-in {
-  animation: stage-in 190ms cubic-bezier(.2,.8,.3,1);
-}
-@keyframes stage-in {
-  from { transform: translateX(115%); opacity: 0; }
-  to   { transform: none; opacity: 1; }
 }
 
 /* Hard keys */
@@ -107,9 +91,6 @@ html, body {
   to   { transform: none; opacity: 1; }
 }
 
-.up-next-row { transition: background 120ms ease; }
-.up-next-row.current { background: rgba(139,92,246,.12); }
-
 /* Shimmer placeholders while detail preloads */
 .shimmer {
   border-radius: 8px;
@@ -125,3 +106,80 @@ html, body {
   0%   { background-position: 100% 0; }
   100% { background-position: 0 0; }
 }
+
+/* ═══════════════ Apple theme ═══════════════
+   A light "liquid glass" look on <html data-theme="apple"> */
+[data-theme="apple"] {
+  --scroll-thumb: #c8c8cd;
+  --acc: #0071e3;
+}
+
+[data-theme="apple"] body {
+  background: #f5f5f7;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  transition: background-color .25s ease;
+}
+[data-theme="apple"] #emptyScreen { background: #f5f5f7; }
+
+/* Frosted glass surfaces */
+[data-theme="apple"] aside {
+  background: rgba(255, 255, 255, .62);
+  border-color: rgba(0, 0, 0, .07);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+}
+[data-theme="apple"] aside > header { border-color: rgba(0, 0, 0, .06); }
+[data-theme="apple"] main > header,
+[data-theme="apple"] footer {
+  background: rgba(255, 255, 255, .55);
+  border-color: rgba(0, 0, 0, .06);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+}
+[data-theme="apple"] #groupHeader {
+  background: rgba(120, 132, 255, .10);
+  border-color: rgba(120, 132, 255, .28);
+  border-radius: 18px;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* Accent + links */
+[data-theme="apple"] .email-body a { color: #0071e3; }
+[data-theme="apple"] .email-body a:hover { color: #005bbf; }
+[data-theme="apple"] ::selection { background: rgba(0, 122, 255, .22); }
+[data-theme="apple"] input:focus,
+[data-theme="apple"] button:focus-visible {
+  outline: 2px solid rgba(0, 125, 250, .55);
+  outline-offset: 1px;
+}
+
+/* Cards */
+[data-theme="apple"] .group-card {
+  background: rgba(255, 255, 255, .78) !important;
+  border-color: rgba(0, 0, 0, .07) !important;
+  border-radius: 18px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .03), 0 12px 28px rgba(0, 0, 0, .07);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  transition: transform .14s ease, box-shadow .14s ease;
+}
+[data-theme="apple"] .group-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, .04), 0 20px 40px rgba(0, 0, 0, .10);
+}
+
+/* Header utility pill buttons */
+[data-theme="apple"] main header button[class*="border"] {
+  background: rgba(255, 255, 255, .8);
+  border-color: rgba(0, 0, 0, .10) !important;
+  color: #1d1d1f;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .04);
+}
+[data-theme="apple"] main header button[class*="border"]:hover {
+  background: #fff;
+  border-color: rgba(0, 0, 0, .16) !important;
+}
+
+/* History rows keep their tint; just add a subtle glass */
+[data-theme="apple"] #historyList > div { backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
