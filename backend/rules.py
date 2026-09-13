@@ -1,0 +1,165 @@
+"""WikiSkill rule "skills": editable markdown -> structured rule -> matcher."""
+from __future__ import annotations
+
+import json
+
+_ACTIONS = {"trash", "star", "skip"}
+_SCOPES = {"all_mail", "promo_only"}
+_TRUE = {"1", "true", "yes", "on"}
+
+
+class RuleParseError(ValueError):
+    def __init__(self, errors: list[dict]):
+        self.errors = errors
+        super().__init__(str(errors))
+
+
+def _split_frontmatter(text: str) -> tuple[dict, str]:
+    stripped = text.lstrip()
+    if not stripped.startswith("---"):
+        return {}, text
+    try:
+        _, fm, rest = stripped.split("---", 2)
+    except ValueError:
+        return {}, text
+    front: dict = {}
+    for i, raw in enumerate(fm.splitlines()):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if ":" not in line:
+            raise RuleParseError([{"line": i + 2, "msg": f"expected 'key: value', got: {line}"}])
+        k, v = line.split(":", 1)
+        key = k.strip().lower()
+        val = v.strip()
+        if key == "name":
+            if not val:
+                raise RuleParseError([{"line": i + 2, "msg": "name cannot be empty"}])
+            front["name"] = val
+        elif key == "enabled":
+            front["enabled"] = val.lower() in _TRUE
+        elif key in ("action", "scope"):
+            front[key] = val.lower()
+        else:
+            raise RuleParseError([{"line": i + 2, "msg": f"unknown frontmatter key: {key}"}])
+    return front, rest
+
+
+def _parse_list(s: str) -> list[str]:
+    s = s.strip()
+    if s.startswith("["):
+        try:
+            data = json.loads(s)
+            return [str(x).strip() for x in data] if isinstance(data, list) else []
+        except json.JSONDecodeError:
+            return []
+    return [x.strip() for x in s.split(",") if x.strip()]
+
+
+def parse_skill_md(md: str) -> dict:
+    errors: list[dict] = []
+    front, rest = _split_frontmatter(md or "")
+    name = front.get("name")
+    if not name:
+        errors.append({"line": 1, "msg": "name is required (frontmatter must be first)"})
+
+    action = front.get("action")
+    if action not in _ACTIONS:
+        errors.append({"line": 1, "msg": f"action must be one of {sorted(_ACTIONS)}"})
+    scope = front.get("scope", "all_mail")
+    if scope not in _SCOPES:
+        errors.append({"line": 1, "msg": f"scope must be one of {sorted(_SCOPES)}"})
+
+    body: dict = {}
+    lines = rest.splitlines()
+    in_match = False
+    about_parts: list[str] = []
+    for i, raw in enumerate(lines):
+        line = raw.rstrip()
+        s = line.strip()
+        low = s.lower()
+        if low.startswith("## "):
+            in_match = low == "## match"
+            continue
+        if low.startswith("# ") or s.startswith("---"):
+            continue
+        if not in_match:
+            if s:
+                about_parts.append(s)
+            continue
+        if not s or s.startswith("#"):
+            continue
+        if ":" not in s:
+            errors.append({"line": i + 1, "msg": f"expected 'key: value' in match, got: {s}"})
+            continue
+        k, v = s.split(":", 1)
+        key = k.strip().lower()
+        val = v.strip()
+        if key == "sender":
+            body["sender"] = val
+        elif key == "subject":
+            body["subject"] = _parse_list(val)
+        elif key == "category":
+            body["category"] = _parse_list(val)
+        elif key == "emails_per_day":
+            try:
+                epd = int(float(val))
+                if epd <= 0:
+                    raise ValueError
+                body["emails_per_day"] = epd
+            except ValueError:
+                errors.append({"line": i + 1, "msg": "emails_per_day must be a positive integer"})
+        else:
+            errors.append({"line": i + 1, "msg": f"unknown match key: {key}"})
+
+    sender = body.get("sender")
+    if sender is not None:
+        s = sender.strip()
+        if "@" not in s and not s.startswith("@"):
+            errors.append({"line": 1, "msg": "sender must be an email (a@b.com), @domain, or display name"})
+
+    if not (body.get("sender") or body.get("subject") or body.get("category") or body.get("emails_per_day")):
+        errors.append({"line": 1, "msg": "at least one match condition is required (sender | subject | category | emails_per_day)"})
+
+    if errors:
+        raise RuleParseError(errors)
+
+    return {
+        "name": name,
+        "enabled": front.get("enabled", True),
+        "action": action,
+        "scope": scope,
+        "sender": (sender or "").strip() or None,
+        "subject": body.get("subject", []) or [],
+        "category": body.get("category", []) or [],
+        "emails_per_day": body.get("emails_per_day"),
+        "about": "\n".join(about_parts).strip(),
+    }
+
+
+def parsed_json(rule: dict) -> str:
+    return json.dumps(rule, sort_keys=True)
+
+
+def rule_md_for_sender(email: str, name: str, promo_only: bool = False) -> str:
+    scope = "promo_only" if promo_only else "all_mail"
+    noun = name or email
+    title = f"{'Promos from ' if promo_only else 'Block '}{noun}"
+    about = (
+        "Automatically delete promo emails from this sender."
+        if promo_only
+        else "Automatically delete all email from this sender."
+    )
+    return (
+        "---\n"
+        f"name: {title}\n"
+        "enabled: true\n"
+        "action: trash\n"
+        f"scope: {scope}\n"
+        "---\n"
+        "## match\n"
+        f"sender: {email}\n"
+        "\n"
+        "## about\n"
+        f"{about}\n"
+    )

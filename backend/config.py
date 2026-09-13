@@ -44,3 +44,15 @@ SUMMARY_TIMEOUT_SECONDS = 30
 GROUP_SUMMARY_BODY_CHARS = 1500
 GROUP_MAX_EMAILS = 15
 GROUP_PREVIEW_CHARS = 600
+
+# WikiSkill rules & wiki tuning
+TRACE_WINDOW_SECONDS = 30 * 86400          # prefilter looks back this far
+TRACE_RETENTION_DAYS = 90
+MIN_ACTIONS_FOR_PATTERN = 3                 # minimum same-sender actions
+PROMO_RATIO_FOR_PATTERN = 0.9               # >=90% promos => promo-only rule
+PATTERN_RECENT_DAYS = 7                     # at least one action this recent
+RECENT_SAMPLE_SIZE = 5                      # latest N messages for promo ratio
+KEYWORD_MIN_LEN = 4
+FREQ_EMAILS_PER_DAY = 3                     # volume threshold
+EVOLVE_MAX_CLUSTERS = 10
+PROPOSAL_SUPPRESS_DAYS = 30
