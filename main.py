@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from urllib.parse import quote
 
@@ -10,6 +11,8 @@ from pydantic import BaseModel
 
 from backend import ai_summary, auth, config, gmail_service, store
 from backend import queue as queue_module
+from backend import wiki as wiki_module
+from backend.rules import RuleParseError, parse_skill_md
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("gmailer")
@@ -114,7 +117,7 @@ def api_queue(max_results: int = config.DEFAULT_BATCH, page_token: str | None = 
     max_results = max(1, min(max_results, config.MAX_BATCH))
     items, bundles, next_page_token = _run(queue_module.build_queue, service, max_results, page_token)
 
-    kept, auto_trashed, auto_starred, auto_skipped = _apply_rules(service, items)
+    kept, auto_trashed, auto_starred, auto_skipped, _rule_stats = _apply_rules(service, items)
     items = kept
     for item in items:
         # Hydrate cached summaries (and bodies) so reloads and group views
@@ -215,88 +218,157 @@ def api_skipped_clear():
     return {"ok": True, "cleared": cleared}
 
 
-# --- Blocked senders (auto-delete) -----------------------------------------------
+# --- Rules (auto-delete / auto-star engine) -------------------------------------
 
-class BlockedAddRequest(BaseModel):
-    sender_email: str
-    sender_name: str | None = None
-
-
-class BlockedRemoveRequest(BaseModel):
-    sender_email: str
+class RuleCreateRequest(BaseModel):
+    markdown: str
+    enabled: bool = True
 
 
-@app.get("/api/blocked")
-def api_blocked():
-    return {"items": store.list_blocked()}
+class RuleToggleRequest(BaseModel):
+    enabled: bool
 
 
-@app.post("/api/blocked/add")
-def api_blocked_add(req: BlockedAddRequest):
-    service = require_service()
-    email = (req.sender_email or "").strip().lower()
-    if not email:
-        raise HTTPException(status_code=400, detail="sender_email required")
-    store.add_blocked(email, req.sender_name)
-    # Purge what's already unread from this sender right now (not just future mail).
-    ids = _run(gmail_service.list_sender_unread_ids, service, email)
-    failed = gmail_service.bulk_execute(service, ids, gmail_service.trash) if ids else []
-    for mid in ids:
-        if mid not in failed:
-            store.remove_skipped(mid)  # a blocked sender can't stay "skipped"
-    return {"ok": True, "purged": len(ids) - len(failed), "failed": len(failed)}
+class RuleReorderRequest(BaseModel):
+    rule_ids: list[int]
 
 
-@app.post("/api/blocked/remove")
-def api_blocked_remove(req: BlockedRemoveRequest):
-    email = (req.sender_email or "").strip().lower()
-    if not email:
-        raise HTTPException(status_code=400, detail="sender_email required")
-    store.remove_blocked(email)
+class RuleConvertRequest(BaseModel):
+    rule_id: int
+
+
+@app.get("/api/rules")
+def api_rules():
+    return {"items": store.list_rules()}
+
+
+@app.post("/api/rules")
+def api_rules_create(req: RuleCreateRequest):
+    md = (req.markdown or "").strip()
+    if not md:
+        raise HTTPException(status_code=400, detail="markdown required")
+    try:
+        parsed = parse_skill_md(md)
+    except RuleParseError as exc:
+        raise HTTPException(status_code=400, detail={"errors": exc.errors})
+    rid = store.add_rule(md, json.dumps(parsed, sort_keys=True))
+    if not req.enabled:
+        store.update_rule(rid, enabled=False)
+    return store.get_rule(rid)
+
+
+@app.patch("/api/rules/{rule_id}")
+def api_rule_toggle(rule_id: int, req: RuleToggleRequest):
+    if store.get_rule(rule_id) is None:
+        raise HTTPException(status_code=404, detail="rule not found")
+    store.update_rule(rule_id, enabled=req.enabled)
+    return store.get_rule(rule_id)
+
+
+@app.delete("/api/rules/{rule_id}")
+def api_rule_delete(rule_id: int):
+    if store.get_rule(rule_id) is None:
+        raise HTTPException(status_code=404, detail="rule not found")
+    store.delete_rule(rule_id)
+    return {"ok": True, "id": rule_id}
+
+
+@app.post("/api/rules/reorder")
+def api_rules_reorder(req: RuleReorderRequest):
+    store.reorder_rules([int(i) for i in req.rule_ids])
     return {"ok": True}
 
 
-@app.post("/api/blocked/clear")
-def api_blocked_clear():
-    cleared = store.clear_blocked()
-    return {"ok": True, "cleared": cleared}
-
-
-# --- Promo auto-delete (blocked-for-promos-only) ---------------------------------
-
-@app.get("/api/promo-blocked")
-def api_promo_blocked():
-    return {"items": store.list_promo_blocked()}
-
-
-@app.post("/api/promo-blocked/add")
-def api_promo_blocked_add(req: BlockedAddRequest):
+@app.post("/api/rules/{rule_id}/apply-now")
+def api_rule_apply_now(rule_id: int):
     service = require_service()
-    email = (req.sender_email or "").strip().lower()
-    if not email:
-        raise HTTPException(status_code=400, detail="sender_email required")
-    store.add_promo_blocked(email, req.sender_name)
-    # Purge already-unread PROMO mail from this vendor right now (not just future mail).
-    # Non-promo mail from them is left alone so real messages still surface.
-    ids = _run(gmail_service.list_sender_unread_ids, service, email)
-    promo_ids: list[str] = []
-    if ids:
-        metas = _run(gmail_service.get_metadata_batch, service, ids)
-        promo_ids = [m["id"] for m in metas if m.get("promo")]
-    failed = gmail_service.bulk_execute(service, promo_ids, gmail_service.trash) if promo_ids else []
-    for mid in promo_ids:
-        if mid not in failed:
-            store.remove_skipped(mid)  # a promo-deleted sender can't stay "skipped"
-    return {"ok": True, "purged": len(promo_ids) - len(failed), "skipped": len(ids) - len(promo_ids), "failed": len(failed)}
+    if store.get_rule(rule_id) is None:
+        raise HTTPException(status_code=404, detail="rule not found")
+    items, _bundles, _nxt = _run(queue_module.build_queue, service, config.DEFAULT_BATCH, None)
+    _kept, _t, _s, _k, rule_stats = _apply_rules(service, items)
+    stats = rule_stats.get(rule_id, {"trash": 0, "star": 0, "skip": 0})
+    return {"ok": True, "rule_id": rule_id, "matched": sum(stats.values()), **stats}
 
 
-@app.post("/api/promo-blocked/remove")
-def api_promo_blocked_remove(req: BlockedRemoveRequest):
-    email = (req.sender_email or "").strip().lower()
-    if not email:
-        raise HTTPException(status_code=400, detail="sender_email required")
-    store.remove_promo_blocked(email)
+# --- Traces (raw evidence log) -------------------------------------------------
+
+@app.get("/api/traces")
+def api_traces(limit: int = 50, rule_id: int | None = None):
+    limit = max(1, min(limit, 200))
+    return {"items": store.list_traces(limit=limit, rule_id=rule_id)}
+
+
+# --- Wiki observations ---------------------------------------------------------
+
+@app.get("/api/wiki/observations")
+def api_wiki_observations():
+    return {"items": store.list_observations()}
+
+
+@app.post("/api/wiki/observations/{obs_id}/dismiss")
+def api_wiki_observation_dismiss(obs_id: int):
+    if store.get_observation(obs_id) is None:
+        raise HTTPException(status_code=404, detail="observation not found")
+    store.dismiss_observation(obs_id)
     return {"ok": True}
+
+
+@app.post("/api/wiki/observations/{obs_id}/convert")
+def api_wiki_observation_convert(obs_id: int, req: RuleConvertRequest):
+    if store.get_observation(obs_id) is None:
+        raise HTTPException(status_code=404, detail="observation not found")
+    if store.get_rule(req.rule_id) is None:
+        raise HTTPException(status_code=404, detail="rule not found")
+    store.mark_observation_converted(obs_id, req.rule_id)
+    return {"ok": True}
+
+
+# --- Proposals ----------------------------------------------------------------
+
+@app.get("/api/proposals")
+def api_proposals(status: str = "pending"):
+    return {"items": store.list_proposals(status or "pending")}
+
+
+@app.post("/api/proposals/{proposal_id}/approve")
+def api_proposal_approve(proposal_id: int):
+    prop = store.get_proposal(proposal_id)
+    if prop is None:
+        raise HTTPException(status_code=404, detail="proposal not found")
+    if prop["status"] != "pending":
+        raise HTTPException(status_code=409, detail="proposal already reviewed")
+    try:
+        parsed = parse_skill_md(prop["proposed_skill_md"])
+    except RuleParseError as exc:
+        raise HTTPException(status_code=400, detail={"errors": exc.errors})
+    rid = store.add_rule(prop["proposed_skill_md"], json.dumps(parsed, sort_keys=True))
+    if prop.get("observation_id"):
+        store.mark_observation_converted(prop["observation_id"], rid)
+    store.approve_proposal(proposal_id, rid)
+    return {"ok": True, "rule": store.get_rule(rid), "proposal": store.get_proposal(proposal_id)}
+
+
+@app.post("/api/proposals/{proposal_id}/reject")
+def api_proposal_reject(proposal_id: int):
+    prop = store.get_proposal(proposal_id)
+    if prop is None:
+        raise HTTPException(status_code=404, detail="proposal not found")
+    if prop["status"] != "pending":
+        raise HTTPException(status_code=409, detail="proposal already reviewed")
+    store.reject_proposal(proposal_id, config.PROPOSAL_SUPPRESS_DAYS)
+    return {"ok": True, "proposal": store.get_proposal(proposal_id)}
+
+
+# --- WikiSkill evolve ---------------------------------------------------------
+
+@app.post("/api/evolve")
+def api_evolve():
+    try:
+        result = wiki_module.run_evolve(llm_fn=wiki_module._ollama_agent)
+    except Exception as exc:
+        logger.exception("evolve failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"ok": True, **result}
 
 
 # --- Categories ------------------------------------------------------------
@@ -422,15 +494,17 @@ def _run_bulk(service, fn, req: BulkRequest, action: str):
     }
 
 
-def _apply_rules(service, items: list[dict]) -> tuple[list[dict], int, int, int]:
+def _apply_rules(service, items: list[dict]) -> tuple[list[dict], int, int, int, dict]:
     """Apply enabled rules in precedence order (first match wins) to a queue
     batch. Trash/star go through Gmail in bulk; skip hides locally. Auto-actions
-    leave a trace row so rules stay anchored to the mail they acted on."""
+    leave a trace row so rules stay anchored to the mail they acted on.
+    Returns (kept, n_trash, n_star, n_skip, rule_stats) where rule_stats maps
+    rule_id -> {"trash": n, "star": n, "skip": n} for successfully applied items."""
     from backend.rules import frequency_map, match_item
 
     enabled = [r for r in store.list_rules() if r["enabled"]]
     if not enabled:
-        return items, 0, 0, 0
+        return items, 0, 0, 0, {}
     enabled.sort(key=lambda r: r["precedence"])
     freq = frequency_map(store.traces_since(config.TRACE_WINDOW_SECONDS))
     ctx = {"frequency": freq}
@@ -464,6 +538,7 @@ def _apply_rules(service, items: list[dict]) -> tuple[list[dict], int, int, int]
         if mid in id_map:
             kept.append(id_map[mid])
 
+    rule_stats: dict[int, dict] = {}
     for it, rule in fired:
         action = rule["parsed"]["action"]
         done = (
@@ -473,6 +548,8 @@ def _apply_rules(service, items: list[dict]) -> tuple[list[dict], int, int, int]
         )
         if not done:
             continue
+        stats = rule_stats.setdefault(rule["id"], {"trash": 0, "star": 0, "skip": 0})
+        stats[action] += 1
         store.add_trace(
             message_id=it["id"],
             sender_email=it.get("sender_email"),
@@ -484,7 +561,7 @@ def _apply_rules(service, items: list[dict]) -> tuple[list[dict], int, int, int]
             rule_id=rule["id"],
         )
 
-    return (kept, len(trash_done), len(star_done), len(skip_items))
+    return (kept, len(trash_done), len(star_done), len(skip_items), rule_stats)
 
 
 @app.post("/api/bundles/{sender_key}/trash")

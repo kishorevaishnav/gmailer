@@ -250,6 +250,7 @@ def propose_rule(cluster: dict, observation: dict, llm_fn=None) -> dict | None:
         summary=summary, rationale=rationale, downside=downside,
         evidence_json=json.dumps([r.get("message_id") for r in cluster.get("items", [])]),
         proposed_skill_md=md,
+        observation_id=observation.get("id"),
     )
     return {"id": pid, "proposed_skill_md": md}
 

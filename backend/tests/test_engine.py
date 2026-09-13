@@ -26,7 +26,7 @@ def test_trash_rule_applied_to_inbox(monkeypatch):
     monkeypatch.setattr(gmail_service, "bulk_execute", fake_bulk)
 
     items = [item(id="m1", promo=True), item(id="m2", promo=False)]
-    kept, n_trash, n_star, n_skip = _apply_rules(None, items)
+    kept, n_trash, n_star, n_skip, _rs = _apply_rules(None, items)
     assert trashed == ["m1"]
     assert n_trash == 1 and n_star == 0 and n_skip == 0
     assert [i["id"] for i in kept] == ["m2"]
@@ -46,7 +46,7 @@ def test_star_and_skip_rules_fire(monkeypatch):
     monkeypatch.setattr(gmail_service, "bulk_execute", fake_bulk)
     monkeypatch.setattr(store, "add_skipped", fake_add_skipped)
     items = [item(id="m1", promo=True), item(id="m2", promo=False, category="Finance/Bill")]
-    kept, n_trash, n_star, n_skip = _apply_rules(None, items)
+    kept, n_trash, n_star, n_skip, _rs = _apply_rules(None, items)
     assert n_star == 1 and n_skip == 1 and len(kept) == 0
 
 
@@ -56,7 +56,7 @@ def test_in_precedence_order_first_match_wins(monkeypatch):
     monkeypatch.setattr(gmail_service, "bulk_execute", lambda c, ids, fn: [])
     monkeypatch.setattr(store, "add_skipped", lambda it: None)
     items = [item(id="m1", promo=True)]
-    _, n_trash, n_star, n_skip = _apply_rules(None, items)
+    _, n_trash, n_star, n_skip, _rs = _apply_rules(None, items)
     assert n_skip == 1 and n_trash == 0  # broad rule matched first
 
 
@@ -64,6 +64,6 @@ def test_failed_trash_counts_not_incremented(monkeypatch):
     _add("---\nname: t\naction: trash\n---\n## match\nsender: @amazon.com\n")
     monkeypatch.setattr(gmail_service, "bulk_execute", lambda c, ids, fn: ids)  # all fail
     items = [item(id="m1", promo=False)]
-    kept, n_trash, _, _ = _apply_rules(None, items)
+    kept, n_trash, _, _, _rs = _apply_rules(None, items)
     assert n_trash == 0
     assert [i["id"] for i in kept] == ["m1"]

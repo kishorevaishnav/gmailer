@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS rule_proposals (
     downside          TEXT,
     evidence_json     TEXT NOT NULL,
     proposed_skill_md TEXT NOT NULL,
+    observation_id    INTEGER,
     rule_id           INTEGER,
     status            TEXT DEFAULT 'pending',
     created_at        REAL,
@@ -145,6 +146,10 @@ def _get() -> sqlite3.Connection:
         try:
             # Older databases created before the column existed.
             _conn.execute("ALTER TABLE messages ADD COLUMN category TEXT")
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError):
+            pass  # column already present (new schema or a prior run)
+        try:
+            _conn.execute("ALTER TABLE rule_proposals ADD COLUMN observation_id INTEGER")
         except (sqlite3.OperationalError, sqlite3.ProgrammingError):
             pass  # column already present (new schema or a prior run)
         _seed_default_categories()
@@ -419,105 +424,6 @@ def clear_skipped() -> int:
     return cleared
 
 
-# --- Blocked senders (auto-delete) ---------------------------------------------
-# Blocked sender emails are persisted here and matched against the live queue on
-# every pull; any unread message from a blocked sender is trashed immediately, so
-# new mail from them never surfaces again.
-
-def add_blocked(email: str, sender_name: str | None = None) -> None:
-    if not email:
-        return
-    try:
-        with _lock:
-            _get().execute(
-                "INSERT OR REPLACE INTO blocked (email, sender_name, blocked_at) VALUES (?,?,?)",
-                (email, sender_name or "", time.time()),
-            )
-            _get().commit()
-    except Exception as exc:
-        logger.warning("store.add_blocked failed: %s", exc)
-
-
-def remove_blocked(email: str) -> None:
-    try:
-        with _lock:
-            _get().execute("DELETE FROM blocked WHERE email = ?", (email,))
-            _get().commit()
-    except Exception as exc:
-        logger.warning("store.remove_blocked failed: %s", exc)
-
-
-def list_blocked() -> list[dict]:
-    try:
-        with _lock:
-            rows = _get().execute(
-                "SELECT email, sender_name, blocked_at FROM blocked ORDER BY blocked_at"
-            ).fetchall()
-    except Exception as exc:
-        logger.warning("store.list_blocked failed: %s", exc)
-        return []
-    return [
-        {"email": r["email"], "sender_name": r["sender_name"], "blocked_at": r["blocked_at"]}
-        for r in rows
-    ]
-
-
-def clear_blocked() -> int:
-    cleared = 0
-    try:
-        with _lock:
-            row = _get().execute("SELECT COUNT(*) FROM blocked").fetchone()
-            if row:
-                cleared = int(row[0])
-            _get().execute("DELETE FROM blocked")
-            _get().commit()
-    except Exception as exc:
-        logger.warning("store.clear_blocked failed: %s", exc)
-    return cleared
-
-
-# --- Promo auto-delete (promo-only senders) -----------------------------------
-# Like blocked senders, but only PROMO-labelled mail from the vendor is trashed;
-# regular (non-promo) mail keeps flowing. Matched on every queue pull.
-
-def add_promo_blocked(email: str, sender_name: str | None = None) -> None:
-    if not email:
-        return
-    try:
-        with _lock:
-            _get().execute(
-                "INSERT OR REPLACE INTO promo_blocked (email, sender_name, promo_blocked_at) VALUES (?,?,?)",
-                (email, sender_name or "", time.time()),
-            )
-            _get().commit()
-    except Exception as exc:
-        logger.warning("store.add_promo_blocked failed: %s", exc)
-
-
-def remove_promo_blocked(email: str) -> None:
-    try:
-        with _lock:
-            _get().execute("DELETE FROM promo_blocked WHERE email = ?", (email,))
-            _get().commit()
-    except Exception as exc:
-        logger.warning("store.remove_promo_blocked failed: %s", exc)
-
-
-def list_promo_blocked() -> list[dict]:
-    try:
-        with _lock:
-            rows = _get().execute(
-                "SELECT email, sender_name, promo_blocked_at FROM promo_blocked ORDER BY promo_blocked_at"
-            ).fetchall()
-    except Exception as exc:
-        logger.warning("store.list_promo_blocked failed: %s", exc)
-        return []
-    return [
-        {"email": r["email"], "sender_name": r["sender_name"], "promo_blocked_at": r["promo_blocked_at"]}
-        for r in rows
-    ]
-
-
 # --- Rules (skills) ----------------------------------------------------------
 
 def next_precedence() -> int:
@@ -543,6 +449,7 @@ def get_rule(rule_id: int) -> dict | None:
         return None
     d = dict(row)
     d["parsed"] = json.loads(d["parsed_json"])
+    d["enabled"] = bool(d["enabled"])
     return d
 
 
@@ -552,6 +459,7 @@ def list_rules() -> list[dict]:
     for r in rows:
         d = dict(r)
         d["parsed"] = json.loads(d["parsed_json"])
+        d["enabled"] = bool(d["enabled"])
         out.append(d)
     return out
 
@@ -590,6 +498,27 @@ def move_rule(rule_id: int, direction: int) -> None:
         conn.execute("UPDATE rules SET precedence = -1 WHERE id = ?", (a["id"],))
         conn.execute("UPDATE rules SET precedence = ? WHERE id = ?", (a["precedence"], b["id"]))
         conn.execute("UPDATE rules SET precedence = ? WHERE id = ?", (b["precedence"], a["id"]))
+        conn.commit()
+
+
+def reorder_rules(ordered_ids: list[int]) -> None:
+    """Assign precedence 1..N in the given order, avoiding UNIQUE collisions by
+    first parking every rule at a negative precedence."""
+    ids = [int(i) for i in ordered_ids]
+    if not ids:
+        return
+    with _lock:
+        conn = _get()
+        now = time.time()
+        visible = [r["id"] for r in list_rules()]
+        missing = [r for r in visible if r not in ids]
+        ids = ids + missing  # keep anything the client didn't send at the tail
+        for i, rid in enumerate(ids):
+            conn.execute("UPDATE rules SET precedence = ?, updated_at = ? WHERE id = ?",
+                         (-(i + 1), now, rid))
+        for i, rid in enumerate(ids):
+            conn.execute("UPDATE rules SET precedence = ?, updated_at = ? WHERE id = ?",
+                         (i + 1, now, rid))
         conn.commit()
 
 
@@ -704,13 +633,14 @@ def mark_observation_converted(obs_id: int, rule_id: int) -> None:
 # --- Proposals ---------------------------------------------------------------
 
 def add_proposal(*, source: str, label: str, summary: str, rationale: str, downside: str,
-                 evidence_json: str, proposed_skill_md: str) -> int:
+                 evidence_json: str, proposed_skill_md: str, observation_id: int | None = None) -> int:
     with _lock:
         cur = _get().execute(
             "INSERT INTO rule_proposals (source, label, summary, rationale, downside,"
-            " evidence_json, proposed_skill_md, status, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
-            (source, label, summary, rationale, downside, evidence_json, proposed_skill_md, time.time()),
+            " observation_id, evidence_json, proposed_skill_md, status, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+            (source, label, summary, rationale, downside, observation_id,
+             evidence_json, proposed_skill_md, time.time()),
         )
         _get().commit()
         return int(cur.lastrowid)
