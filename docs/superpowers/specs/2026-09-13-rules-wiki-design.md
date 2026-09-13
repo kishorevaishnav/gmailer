@@ -11,8 +11,13 @@ general, **user-editable rule engine** modeled on Google Research's WikiSkill
 framework (arXiv:2608.27454): three layers — immutable execution traces (Raw),
 a compounding knowledge base (Wiki), and editable procedural rules (Skills).
 Rules are edited as **raw markdown skill files** in the frontend, validated on
-save. The system proposes rule changes from observed behavior; the user edits,
-approves, or rejects each proposal before it goes live (suggest + approve).
+save. Two local **AI agent roles** (running on the existing Ollama model) do the
+learning — a *Wiki Maintainer* that distills traces into the knowledge base and
+a *Skill Proposer* that drafts reasoned rule changes from it. The system
+proposes rule changes from observed behavior; the user edits, approves, or
+rejects each proposal before it goes live (suggest + approve). No cloud, no
+downloaded WikiSkill code, no multi-agent orchestration framework — both agents
+are single Ollama calls inside this codebase.
 
 ## 2. Decisions (confirmed)
 
@@ -37,6 +42,12 @@ approves, or rejects each proposal before it goes live (suggest + approve).
 11. **Quick-create**: `Block` button and `P` key stay as rule quick-creators
     (explicit user action → rule is live immediately, no proposal). Only
     behavior *observed* by the system goes through propose → approve.
+12. **True WikiSkill agent loop** (local, Ollama `gemma3:4b`): a **Wiki
+    Maintainer** agent periodically distills `traces` into wiki observations,
+    and a **Skill Proposer** agent reads the wiki + evidence and drafts each
+    proposal (rule markdown + rationale + downside). Human approval is the
+    gate — no auto-approve, no rollback machinery. A cheap deterministic
+    pre-filter bounds which evidence clusters reach the agents (compute guard).
 
 ## 3. Rule format (skill markdown)
 
@@ -108,9 +119,11 @@ CREATE TABLE wiki_observations ( -- WIKI Layer: compounding knowledge
 
 CREATE TABLE rule_proposals (    -- pending suggest+approve queue
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  source TEXT NOT NULL,          -- detector
+  source TEXT NOT NULL,          -- proposer
   label TEXT NOT NULL,           -- "StockAlertsPress — 4/4 latest trashed"
-  summary TEXT,
+  summary TEXT,                  -- agent's plain-English proposal summary
+  rationale TEXT,                -- agent's "why" (evidence-driven)
+  downside TEXT,                 -- agent's "what could go wrong"
   evidence_json TEXT NOT NULL,   -- trace ids + rendered list
   proposed_skill_md TEXT NOT NULL,
   rule_id INTEGER, status TEXT DEFAULT 'pending',
@@ -140,25 +153,39 @@ Capped retention (e.g. 90 days) via trim on ingest.
   rules scan the current queue batch items (documented MVP limitation). Only
   unread mail is touched; results counted and toasted.
 
-## 6. Evolution loop (detector + proposer)
+## 6. Evolution loop (Wiki Maintainer + Skill Proposer agents)
 
-- Detector (`backend/wiki.py`, deterministic, no LLM): on `POST /api/evolve`,
-  ingests traces from the last 30 days and emits candidates:
-  - **sender-consistent**: ≥3 mail from a sender with ≥90% one action and ≥1
-    within last 7d → sender rule with that action.
-  - **promo-heavy**: sender's latest 5 ≥90% promo and user trashed ≥3 → sender
-    + `scope: promo_only` + trash.
-  - **keyword**: ≥3 trashed across senders sharing a subject keyword (min 4
-    chars) → keyword rule; **category**: ≥3 trashed with same AI category →
-    category rule.
-  - **frequency**: same sender >3 mail/day over 7d while mostly trashed →
-    frequency rule.
-- Candidates become a `rule_proposals` (pending). A short Ollama call
-  (`gemma3:4b`) polishes `proposed_skill_md` + `summary` + a one-line rebuttal
-  ("may over-delete non-promo X"). Dedup: skip if an identical rule exists, or
-  the same proposal is pending/rejected within 30 days (`rejected_until`).
-- Batch size is capped (≤10 candidates/evolve); thresholds live in
-  `backend/config.py` so they're tunable without code changes everywhere.
+Orchestrated on `POST /api/evolve` (called on demand + auto, debounced, after a
+triage session). All agent calls are single Ollama (`gemma3:4b`) invocations in
+`backend/wiki.py`; there is no agent framework, just these two roles.
+
+1. **Pre-filter (deterministic, no LLM)** — bounds compute by mining `traces`
+   (last 30 days) into candidate evidence clusters:
+   - **sender-consistent**: ≥3 mail from a sender with ≥90% one action and ≥1
+     within last 7d → sender rule with that action.
+   - **promo-heavy**: sender's latest 5 ≥90% promo and user trashed ≥3 →
+     sender + `scope: promo_only` + trash.
+   - **keyword**: ≥3 trashed across senders sharing a subject keyword (min 4
+     chars) → keyword rule; **category**: ≥3 trashed with same AI category →
+     category rule.
+   - **frequency**: same sender >3 mail/day over 7d while mostly trashed →
+     frequency rule.
+2. **Wiki Maintainer agent**: for each new cluster, distills the raw traces
+   into a `wiki_observations` row — `summary` (findings), `evidence_count`,
+   `signal`, first/last seen. Unchanged clusters are touched only when their
+   evidence significantly changes (prevent churn).
+3. **Skill Proposer agent**: reads the updated observations + their evidence
+   and drafts a `rule_proposals` row — `label`, `summary`, `rationale` (why it
+   fits your behavior), `downside` (what could go wrong, e.g. over-delete),
+   and `proposed_skill_md`. One proposal per eligible cluster per evolve.
+4. **Gate = human**: the badge appears; the user edits markdown, approves
+   (→ live rule, optional apply-now), or rejects. Reject sets
+   `rejected_until` (+30 days) — the proposer never re-offers it before then.
+5. **Dedup**: skip if an identical enabled rule already exists or the same
+   proposal is pending/rejected-within-30d.
+6. **Bounds**: ≤10 clusters/evolve; thresholds live in `backend/config.py`;
+   agent failures are non-fatal (grade to template text, keep the queue
+   triage unaffected).
 
 ## 7. API
 
@@ -187,7 +214,8 @@ Rule create/edit validate `skill_md`; invalid → `400 {ok:false, errors:[{line,
 ## 8. Frontend (sidebar section A)
 
 - **Sidebar block “Rules & Wiki”** (collapsible, badge = pending proposals).
-  - Proposals pinned above rules: `PROPOSAL — <label>` + evidence summary +
+  - Proposals pinned above rules: `PROPOSAL — <label>` + agent's `summary`
+    (collapsible `why` / `what could go wrong`) + evidence list +
     `[approve] [edit skill] [reject]`.
   - Rule row: name, on/off toggle, precedence ▲▼, `<N> <action> · <M> recent`,
     action label, `▸ see latest →` (expands the exact trailing emails, linked
@@ -219,8 +247,11 @@ Rule create/edit validate `skill_md`; invalid → `400 {ok:false, errors:[{line,
   - `rules_test.py`: parser (valid/invalid, line numbers), match semantics
     (sender forms, promo scope, keywords, category, frequency, AND logic,
     precedence first-match-wins).
-  - `wiki_test.py`: detector candidate generation from synthetic `traces`;
-    dedup + 30d reject suppression; migration of blocked → rules.
+  - `wiki_test.py`: pre-filter candidate generation from synthetic `traces`;
+    Maintainer/Proposer with a **mocked Ollama client** (assert wiki rows +
+    proposal rationale/downside fields are populated, malformed LLM output
+    grades to template fallback); dedup + 30d reject suppression; migration
+    of blocked → rules.
   - `engine_test.py`: api_queue integration (rules applied before surfacing,
     counts, apply-now on fake client).
 - Keep the existing verify loop: `node --check static/app.js`, el-map
