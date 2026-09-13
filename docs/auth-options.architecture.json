@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Gmail Access Without the Verification Wait",
+    "quality_profile": "showcase",
+    "viewBox": [940, 480],
+    "views": [
+      {
+        "id": "option-a",
+        "label": "Option A · Official",
+        "focus": ["you", "fastapi", "oauth", "api"],
+        "note": "Desktop OAuth client in Testing mode + your email as a test user — works today, no verification."
+      },
+      {
+        "id": "option-b",
+        "label": "Option B · RPA",
+        "focus": ["you", "rpa", "web"],
+        "note": "Playwright browser, you sign in once, session persists, in-page /sync XHRs do the work."
+      },
+      {
+        "id": "option-c",
+        "label": "Option C · Cookies",
+        "focus": ["existing-chrome", "fastapi", "web"],
+        "note": "CDP cookie export replayed server-side against Gmail's internal endpoint — last resort."
+      }
+    ]
+  },
+  "components": [
+    { "id": "you", "type": "external", "label": "You", "sublabel": "keyboard hotkeys", "pos": [170, 120], "size": [140, 56] },
+    { "id": "fastapi", "type": "backend", "label": "Gmailer App", "sublabel": "FastAPI · localhost:8000", "pos": [400, 120], "size": [160, 56] },
+    { "id": "oauth", "type": "security", "label": "Google OAuth", "sublabel": "consent · Testing mode", "pos": [400, 34], "size": [160, 50] },
+    { "id": "api", "type": "external", "label": "Gmail REST API", "sublabel": "googleapis.com · official", "pos": [660, 120], "size": [160, 56] },
+    { "id": "existing-chrome", "type": "external", "label": "Your Chrome", "sublabel": "already logged into Gmail", "pos": [170, 320], "size": [140, 56] },
+    { "id": "rpa", "type": "backend", "label": "Playwright Browser", "sublabel": "auto Chromium · saved profile", "pos": [400, 320], "size": [160, 56] },
+    { "id": "web", "type": "external", "label": "Gmail Web Sync", "sublabel": "mail.google.com/sync · internal", "pos": [660, 320], "size": [160, 56] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Your Mac · localhost", "wraps": ["you", "fastapi", "existing-chrome", "rpa"], "pad": 18 },
+    { "kind": "security-group", "label": "Google Account", "wraps": ["oauth", "api", "web"], "pad": 18 }
+  ],
+  "connections": [
+    { "id": "you-app", "from": "you", "to": "fastapi", "label": "keyboard" },
+    { "id": "app-oauth", "from": "fastapi", "to": "oauth", "label": "authorize · token exchange", "variant": "security", "fromSide": "top", "toSide": "bottom" },
+    { "id": "app-api", "from": "fastapi", "to": "api", "label": "REST Bearer · gmail.modify", "variant": "emphasis", "labelAt": [640, 208] },
+    { "id": "app-rpa", "from": "fastapi", "to": "rpa", "label": "Playwright control", "fromSide": "bottom", "toSide": "top", "labelAt": [548, 208] },
+    { "id": "rpa-web", "from": "rpa", "to": "web", "label": "in-page /sync XHR · same-origin", "variant": "emphasis", "labelDy": -52 },
+    { "id": "chrome-app", "from": "existing-chrome", "to": "fastapi", "label": "CDP cookie export", "variant": "dashed", "fromSide": "top", "toSide": "bottom", "via": [[240, 256], [480, 256]] },
+    { "id": "app-web", "from": "fastapi", "to": "web", "label": "cookie replay (unofficial)", "variant": "dashed", "fromSide": "bottom", "toSide": "top", "via": [[480, 300], [740, 300]] }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Option A · Official fix",
+      "items": [
+        "Add your email under OAuth → Test users (2 min)",
+        "Works in Testing mode — zero verification",
+        "Only cost: refresh token rotates every 7 days"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Option B · Playwright RPA",
+      "items": [
+        "Automated Chromium with a persistent profile",
+        "You sign in once; the session is reused",
+        "Uses Gmail's internal /sync — unofficial, can break"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Option C · Cookie extraction",
+      "items": [
+        "Attach to your existing Chrome via CDP",
+        "Replay mail.google.com cookies server-side",
+        "Fragile + ToS grey area — last resort"
+      ]
+    }
+  ]
+}
