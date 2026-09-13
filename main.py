@@ -17,6 +17,16 @@ logger = logging.getLogger("gmailer")
 app = FastAPI(title="Gmailer", version="0.1.0")
 
 
+@app.on_event("startup")
+def _startup_migrate_legacy():
+    try:
+        made = store.migrate_legacy_blocked()
+        if made:
+            logger.info("Migrated %d legacy blocked/promo senders into rules", made)
+    except Exception:
+        logger.exception("Legacy blocked migration failed")
+
+
 # --- Auth --------------------------------------------------------------------
 
 @app.get("/healthz")

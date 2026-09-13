@@ -19,6 +19,7 @@ import threading
 import time
 
 from . import config
+from .rules import parse_skill_md, parsed_json, rule_md_for_sender
 
 logger = logging.getLogger("gmailer.store")
 
@@ -765,3 +766,27 @@ def has_duplicate_proposal(proposed_skill_md: str) -> bool:
 
 def identical_rule_exists(parsed_json: str) -> bool:
     return any(r["parsed_json"] == parsed_json for r in list_rules())
+
+
+def migrate_legacy_blocked() -> int:
+    """Convert legacy blocked/promo_blocked tables into rules, then drop them."""
+    try:
+        _get().execute("SELECT COUNT(*) FROM blocked").fetchone()
+    except sqlite3.OperationalError:
+        return 0
+    rows = _get().execute("SELECT email, sender_name FROM blocked").fetchall()
+    promo_rows = _get().execute("SELECT email, sender_name FROM promo_blocked").fetchall()
+    made = 0
+    for r in rows:
+        md = rule_md_for_sender(r["email"], r["sender_name"], promo_only=False)
+        add_rule(md, parsed_json(parse_skill_md(md)))
+        made += 1
+    for r in promo_rows:
+        md = rule_md_for_sender(r["email"], r["sender_name"], promo_only=True)
+        add_rule(md, parsed_json(parse_skill_md(md)))
+        made += 1
+    with _lock:
+        _get().execute("DROP TABLE IF EXISTS blocked")
+        _get().execute("DROP TABLE IF EXISTS promo_blocked")
+        _get().commit()
+    return made
