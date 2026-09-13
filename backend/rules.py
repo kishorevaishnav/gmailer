@@ -141,6 +141,57 @@ def parsed_json(rule: dict) -> str:
     return json.dumps(rule, sort_keys=True)
 
 
+def match_item(rule: dict, item: dict, ctx: dict | None = None) -> bool:
+    """First-match-wins predicate. ctx = {"frequency": {email: emails_per_day}}."""
+    if not rule.get("enabled", True):
+        return False
+    if rule.get("scope") == "promo_only" and not item.get("promo"):
+        return False
+
+    sender = rule.get("sender")
+    email = (item.get("sender_email") or "").strip().lower()
+    name = (item.get("sender_name") or "").strip()
+    if sender:
+        s = sender.strip()
+        if s.startswith("@"):
+            if not email.endswith(s.lower()):
+                return False
+        elif "@" in s:
+            if email != s.lower():
+                return False
+        else:
+            if name.lower() != s.lower() and email != s.lower():
+                return False
+
+    subs = rule.get("subject") or []
+    subject = (item.get("subject") or "").lower()
+    if subs and not any(k.lower() in subject for k in subs):
+        return False
+
+    cats = [c.lower() for c in (rule.get("category") or [])]
+    cat = (item.get("category") or "").strip().lower()
+    if cats and cat not in cats:
+        return False
+
+    epd = rule.get("emails_per_day")
+    if epd:
+        freq = (ctx or {}).get("frequency") or {}
+        if freq.get(email, 0) < epd:
+            return False
+    return True
+
+
+def frequency_map(traces: list[dict], window_days: float = 30.0) -> dict[str, float]:
+    """emails/day per sender derived from trace rows."""
+    counts: dict[str, int] = {}
+    for t in traces:
+        e = (t.get("sender_email") or "").strip().lower()
+        counts[e] = counts.get(e, 0) + 1
+    if window_days <= 0:
+        return {}
+    return {e: c / window_days for e, c in counts.items()}
+
+
 def rule_md_for_sender(email: str, name: str, promo_only: bool = False) -> str:
     scope = "promo_only" if promo_only else "all_mail"
     noun = name or email
