@@ -1,6 +1,7 @@
 """WikiSkill loop: deterministic prefilter + two local Ollama agent roles."""
 from __future__ import annotations
 
+import json
 import logging
 import re
 from time import time
@@ -119,3 +120,157 @@ def _frequency_cluster(traces: list[dict]) -> dict | None:
                     "dominant_action": "trash", "promo_only": False,
                     "emails_per_day": em_day, "items": rows, "count": len(rows)}
     return None
+
+
+# --- Agent roles -------------------------------------------------------------
+
+def _ollama_agent(system: str, user: str) -> str | None:
+    if not config.OLLAMA_MODEL:
+        return None
+    payload = {
+        "model": config.OLLAMA_MODEL,
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+        "stream": False,
+        "keep_alive": "30m",
+        "options": {"temperature": 0.4, "num_predict": 600},
+    }
+    try:
+        resp = requests.post(
+            config.OLLAMA_URL.rstrip("/") + "/api/chat",
+            json=payload,
+            timeout=config.SUMMARY_TIMEOUT_SECONDS,
+        )
+        resp.raise_for_status()
+        return (resp.json().get("message") or {}).get("content", "")
+    except Exception as exc:
+        logger.warning("Ollama agent unavailable: %s", exc)
+        return None
+
+
+def _cluster_brief(cluster: dict) -> dict:
+    items = sorted(cluster.get("items", []), key=lambda r: r.get("ts", 0))[:20]
+    return {
+        "kind": cluster["kind"], "target": cluster.get("target"),
+        "label": cluster.get("label"), "dominant_action": cluster.get("dominant_action"),
+        "promo_only": cluster.get("promo_only"),
+        "emails_per_day": cluster.get("emails_per_day"),
+        "sample_traces": [{k: r.get(k) for k in ("sender_email", "sender_name", "subject", "promo", "category", "action")} for r in items],
+    }
+
+
+def maintain_cluster(cluster: dict, llm_fn=None) -> dict:
+    brief = _cluster_brief(cluster)
+    summary = None
+    if llm_fn:
+        try:
+            summary = (llm_fn(
+                "You are the Wiki Maintainer in a personal email triage agent. "
+                "The user hates noise; observations are concise factual notes "
+                "about repeated behavior. Respond with one sentence.",
+                json.dumps(brief),
+            ) or "").strip() or None
+        except Exception:
+            summary = None
+    if not summary:
+        summary = (f"{brief['label']}: {cluster['count']} matching "
+                   f"{cluster['dominant_action']} actions observed.")
+    last_seen = max((r.get("ts") or 0 for r in cluster.get("items", [])), default=time())
+    signal = min(1.0, 0.5 + min(cluster.get("count", 0), 10) / 10)
+    obs_id = store.upsert_observation(
+        kind=cluster["kind"], target=str(cluster["target"]),
+        action=cluster["dominant_action"], summary=summary,
+        evidence_count=cluster.get("count", 0), signal=signal, last_seen=last_seen,
+    )
+    return store.get_observation(obs_id)
+
+
+def _proposal_md(cluster: dict) -> str:
+    action = cluster.get("dominant_action") or "trash"
+    scope = "promo_only" if cluster.get("promo_only") else "all_mail"
+    lines = ["---",
+             f"name: {cluster.get('label')}",
+             "enabled: true",
+             f"action: {action}",
+             f"scope: {scope}",
+             "---",
+             "## match"]
+    kind = cluster.get("kind")
+    if kind in ("sender", "frequency"):
+        lines.append(f"sender: {cluster.get('target')}")
+    elif kind == "keyword":
+        lines.append(f'subject: ["{cluster.get("target")}"]')
+    elif kind == "category":
+        lines.append(f'category: ["{cluster.get("target")}"]')
+    if cluster.get("emails_per_day"):
+        lines.append(f"emails_per_day: {int(cluster.get('emails_per_day'))}")
+    lines += ["", "## about", "Proposed by the Skill Proposer agent from the wiki."]
+    return "\n".join(lines) + "\n"
+
+
+def propose_rule(cluster: dict, observation: dict, llm_fn=None) -> dict | None:
+    from .rules import parse_skill_md, parsed_json
+
+    md = _proposal_md(cluster)
+    try:
+        parsed = parse_skill_md(md)
+    except Exception as exc:
+        logger.warning("proposer produced invalid skill: %s", exc)
+        return None
+    kj = parsed_json(parsed)
+    if store.identical_rule_exists(kj):
+        return None
+    if store.has_duplicate_proposal(md):
+        return None
+
+    summary = rationale = downside = None
+    if llm_fn:
+        try:
+            raw = llm_fn(
+                "You are the Skill Proposer for a personal email triage agent. "
+                "Propose ONE rule change as JSON with keys: summary, rationale, downside. "
+                "Answer ONLY with that JSON object.",
+                json.dumps({"observation": observation, "cluster": _cluster_brief(cluster), "proposed_skill": md}),
+            )
+            data = json.loads((raw or "").strip())
+            summary = str(data.get("summary") or "") or None
+            rationale = str(data.get("rationale") or "") or None
+            downside = str(data.get("downside") or "") or None
+        except Exception:
+            pass
+    if not summary:
+        summary = f"Auto-{parsed['action']} mail matching the pattern from {cluster.get('label')}."
+    if not rationale:
+        rationale = "Matches repeated behavior in your trace log."
+    if not downside:
+        downside = "May also match a message you meant to keep — review before approving."
+
+    pid = store.add_proposal(
+        source="proposer", label=cluster.get("label") or parsed["name"],
+        summary=summary, rationale=rationale, downside=downside,
+        evidence_json=json.dumps([r.get("message_id") for r in cluster.get("items", [])]),
+        proposed_skill_md=md,
+    )
+    return {"id": pid, "proposed_skill_md": md}
+
+
+def run_evolve(llm_fn=None) -> dict:
+    clusters = prefilter()
+    if not clusters:
+        return {"created_observations": 0, "created_proposals": 0, "skipped": []}
+    cap = config.EVOLVE_MAX_CLUSTERS
+    created_obs = created_prop = 0
+    skipped: list[str] = []
+    for cluster in clusters[:cap]:
+        try:
+            obs = maintain_cluster(cluster, llm_fn)
+            created_obs += 1
+            prop = propose_rule(cluster, obs, llm_fn)
+            if prop:
+                created_prop += 1
+            else:
+                skipped.append(f"{cluster['kind']}:{cluster['target']} (duplicate)")
+        except Exception as exc:
+            logger.warning("evolve cluster failed: %s", exc)
+            skipped.append(f"{cluster['kind']}:{cluster['target']} (error)")
+    return {"created_observations": created_obs, "created_proposals": created_prop, "skipped": skipped}
