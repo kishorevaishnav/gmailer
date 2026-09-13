@@ -142,20 +142,29 @@ def api_queue(max_results: int = config.DEFAULT_BATCH, page_token: str | None = 
 
 @app.get("/api/messages/{message_id}")
 def api_message(message_id: str):
+    def safe_review(service):
+        try:
+            _record_trace(service, message_id, "reviewed")
+        except Exception:
+            pass
+
     cached = store.load_message(message_id)
     if cached and cached.get("summary"):
+        safe_review(None)
         cached["from_cache"] = True
         return cached
     if cached and cached.get("body_text"):
         # Body already local; only the AI summary is stale/absent.
         cached["summary"] = ai_summary.generate_summary(cached)
         store.save_message(cached)
+        safe_review(None)
         cached["from_cache"] = True
         return cached
     service = require_service()
     msg = _run(gmail_service.get_full, service, message_id)
     msg["summary"] = ai_summary.generate_summary(msg)
     store.save_message(msg)
+    safe_review(service)
     return msg
 
 
@@ -184,6 +193,13 @@ def api_skipped():
 @app.post("/api/skipped/add")
 def api_skipped_add(req: SkipAddRequest):
     store.add_skipped(req.item)
+    itm = req.item or {}
+    if itm.get("id"):
+        store.add_trace(
+            message_id=itm["id"], action="skipped", rule_id=None,
+            sender_email=itm.get("sender_email"), sender_name=itm.get("sender_name"),
+            subject=itm.get("subject"), promo=bool(itm.get("promo")), category=itm.get("category"),
+        )
     return {"ok": True}
 
 
@@ -331,10 +347,41 @@ def _undo_payload(action: str, message_id: str) -> dict:
     return {"action": action, "message_ids": [message_id]}
 
 
+def _trace_item_for_message(service, message_id: str) -> dict | None:
+    """Best-effort metadata for trace rows: cache first, then Gmail metadata."""
+    cached = store.load_message(message_id)
+    if cached and cached.get("sender_email"):
+        return {
+            "sender_email": cached.get("sender_email"),
+            "sender_name": cached.get("sender_name"),
+            "subject": cached.get("subject"),
+            "promo": bool(cached.get("promo")),
+            "category": cached.get("category"),
+        }
+    try:
+        meta = gmail_service.get_metadata(service, message_id)
+        return {
+            "sender_email": meta.get("sender_email"),
+            "sender_name": meta.get("sender_name"),
+            "subject": meta.get("subject"),
+            "promo": bool(meta.get("promo")),
+            "category": meta.get("category"),
+        }
+    except Exception:
+        return None
+
+
+def _record_trace(service, message_id: str, action: str, rule_id: int | None = None) -> None:
+    info = _trace_item_for_message(service, message_id)
+    if info:
+        store.add_trace(message_id=message_id, action=action, rule_id=rule_id, **info)
+
+
 @app.post("/api/messages/{message_id}/trash")
 def api_trash(message_id: str):
     service = require_service()
     _run(gmail_service.trash, service, message_id)
+    _record_trace(service, message_id, "trashed")
     return {"ok": True, "undo": _undo_payload("trash", message_id)}
 
 
@@ -342,6 +389,7 @@ def api_trash(message_id: str):
 def api_archive(message_id: str):
     service = require_service()
     _run(gmail_service.archive, service, message_id)
+    _record_trace(service, message_id, "archived")
     return {"ok": True, "undo": _undo_payload("archive", message_id)}
 
 
@@ -349,6 +397,7 @@ def api_archive(message_id: str):
 def api_star(message_id: str):
     service = require_service()
     _run(gmail_service.star, service, message_id)
+    _record_trace(service, message_id, "starred")
     return {"ok": True, "undo": _undo_payload("star", message_id)}
 
 
@@ -362,6 +411,9 @@ def _run_bulk(service, fn, req: BulkRequest, action: str):
     if not req.message_ids:
         raise HTTPException(status_code=400, detail="No message_ids provided")
     failed = _run(gmail_service.bulk_execute, service, req.message_ids, fn)
+    for mid in req.message_ids:
+        if mid not in failed:
+            _record_trace(service, mid, action)
     return {
         "ok": True,
         "processed": len(req.message_ids) - len(failed),
