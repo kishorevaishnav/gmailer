@@ -64,6 +64,60 @@ CREATE TABLE IF NOT EXISTS promo_blocked (
     sender_name TEXT,
     promo_blocked_at REAL
 );
+
+CREATE TABLE IF NOT EXISTS rules (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    skill_md    TEXT NOT NULL,
+    parsed_json TEXT NOT NULL,
+    enabled     INTEGER DEFAULT 1,
+    precedence  INTEGER NOT NULL UNIQUE,
+    created_at  REAL,
+    updated_at  REAL
+);
+
+CREATE TABLE IF NOT EXISTS traces (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          REAL NOT NULL,
+    message_id  TEXT,
+    sender_email TEXT,
+    sender_name TEXT,
+    subject     TEXT,
+    promo       INTEGER DEFAULT 0,
+    category    TEXT,
+    action      TEXT NOT NULL,
+    rule_id     INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_traces_sender ON traces(sender_email, action, ts);
+CREATE INDEX IF NOT EXISTS idx_traces_rule ON traces(rule_id);
+
+CREATE TABLE IF NOT EXISTS wiki_observations (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind           TEXT NOT NULL,
+    target         TEXT NOT NULL,
+    action         TEXT DEFAULT 'trash',
+    summary        TEXT NOT NULL,
+    evidence_count INTEGER DEFAULT 0,
+    signal         REAL DEFAULT 0,
+    first_seen     REAL,
+    last_seen      REAL,
+    status         TEXT DEFAULT 'open',
+    rule_id        INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS rule_proposals (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    source            TEXT NOT NULL,
+    label             TEXT NOT NULL,
+    summary           TEXT,
+    rationale         TEXT,
+    downside          TEXT,
+    evidence_json     TEXT NOT NULL,
+    proposed_skill_md TEXT NOT NULL,
+    rule_id           INTEGER,
+    status            TEXT DEFAULT 'pending',
+    created_at        REAL,
+    rejected_until    REAL
+);
 """
 
 _DEFAULT_CATEGORIES = [
@@ -461,3 +515,253 @@ def list_promo_blocked() -> list[dict]:
         {"email": r["email"], "sender_name": r["sender_name"], "promo_blocked_at": r["promo_blocked_at"]}
         for r in rows
     ]
+
+
+# --- Rules (skills) ----------------------------------------------------------
+
+def next_precedence() -> int:
+    row = _get().execute("SELECT COALESCE(MAX(precedence), 0) + 1 FROM rules").fetchone()
+    return int(row[0])
+
+
+def add_rule(skill_md: str, parsed_json: str) -> int:
+    now = time.time()
+    with _lock:
+        cur = _get().execute(
+            "INSERT INTO rules (skill_md, parsed_json, enabled, precedence, created_at, updated_at)"
+            " VALUES (?, ?, 1, ?, ?, ?)",
+            (skill_md, parsed_json, next_precedence(), now, now),
+        )
+        _get().commit()
+        return int(cur.lastrowid)
+
+
+def get_rule(rule_id: int) -> dict | None:
+    row = _get().execute("SELECT * FROM rules WHERE id = ?", (rule_id,)).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    d["parsed"] = json.loads(d["parsed_json"])
+    return d
+
+
+def list_rules() -> list[dict]:
+    rows = _get().execute("SELECT * FROM rules ORDER BY precedence").fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["parsed"] = json.loads(d["parsed_json"])
+        out.append(d)
+    return out
+
+
+def update_rule(rule_id: int, *, skill_md: str | None = None, parsed_json: str | None = None,
+                enabled: int | None = None, precedence: int | None = None) -> None:
+    sets, vals = [], []
+    if skill_md is not None:
+        sets.append("skill_md = ?"); vals.append(skill_md)
+    if parsed_json is not None:
+        sets.append("parsed_json = ?"); vals.append(parsed_json)
+    if enabled is not None:
+        sets.append("enabled = ?"); vals.append(1 if enabled else 0)
+    if precedence is not None:
+        sets.append("precedence = ?"); vals.append(int(precedence))
+    if not sets:
+        return
+    sets.append("updated_at = ?"); vals.append(time.time())
+    vals.append(rule_id)
+    with _lock:
+        _get().execute(f"UPDATE rules SET {', '.join(sets)} WHERE id = ?", vals)
+        _get().commit()
+
+
+def move_rule(rule_id: int, direction: int) -> None:
+    rules = list_rules()
+    idx = next((i for i, r in enumerate(rules) if r["id"] == rule_id), None)
+    if idx is None:
+        return
+    other = idx + direction
+    if other < 0 or other >= len(rules):
+        return
+    a, b = rules[idx], rules[other]
+    with _lock:
+        conn = _get()
+        conn.execute("UPDATE rules SET precedence = -1 WHERE id = ?", (a["id"],))
+        conn.execute("UPDATE rules SET precedence = ? WHERE id = ?", (a["precedence"], b["id"]))
+        conn.execute("UPDATE rules SET precedence = ? WHERE id = ?", (b["precedence"], a["id"]))
+        conn.commit()
+
+
+def delete_rule(rule_id: int) -> None:
+    with _lock:
+        _get().execute("DELETE FROM rules WHERE id = ?", (rule_id,))
+        _get().commit()
+
+
+# --- Traces (raw layer) ------------------------------------------------------
+
+def add_trace(*, message_id, sender_email, sender_name, subject, promo, category,
+              action: str, rule_id: int | None = None, ts: float | None = None) -> None:
+    with _lock:
+        _get().execute(
+            "INSERT INTO traces (ts, message_id, sender_email, sender_name, subject, promo, category, action, rule_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (ts or time.time(), message_id, sender_email, sender_name, subject,
+             1 if promo else 0, category, action, rule_id),
+        )
+        _get().commit()
+
+
+def traces_since(seconds: int) -> list[dict]:
+    since = time.time() - seconds
+    rows = _get().execute("SELECT * FROM traces WHERE ts >= ? ORDER BY ts", (since,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_traces(limit: int = 50, rule_id: int | None = None) -> list[dict]:
+    sql = "SELECT * FROM traces"
+    params: list = []
+    if rule_id is not None:
+        sql += " WHERE rule_id = ?"
+        params.append(rule_id)
+    sql += " ORDER BY ts DESC LIMIT ?"
+    params.append(limit)
+    return [dict(r) for r in _get().execute(sql, params).fetchall()]
+
+
+def trace_counts_for_rule(rule_id: int, recent_days: int = 7) -> dict:
+    row = _get().execute(
+        "SELECT COUNT(*) AS total, "
+        "SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS recent "
+        "FROM traces WHERE rule_id = ?",
+        (time.time() - recent_days * 86400, rule_id),
+    ).fetchone()
+    return {"total": int(row["total"] or 0), "recent": int(row["recent"] or 0)}
+
+
+def trim_traces(max_age_days: int = 90) -> int:
+    cutoff = time.time() - max_age_days * 86400
+    with _lock:
+        cur = _get().execute("DELETE FROM traces WHERE ts < ?", (cutoff,))
+        _get().commit()
+        return cur.rowcount
+
+
+# --- Wiki observations -------------------------------------------------------
+
+def upsert_observation(*, kind: str, target: str, action: str = "trash", summary: str,
+                       evidence_count: int, signal: float, last_seen: float,
+                       rule_id: int | None = None) -> int:
+    now = time.time()
+    row = _get().execute(
+        "SELECT id, first_seen, rule_id AS old_rule FROM wiki_observations WHERE kind = ? AND target = ?",
+        (kind, target),
+    ).fetchone()
+    with _lock:
+        if row:
+            _get().execute(
+                "UPDATE wiki_observations SET action = ?, summary = ?, evidence_count = ?, signal = ?,"
+                " last_seen = ?, rule_id = COALESCE(?, rule_id) WHERE id = ?",
+                (action, summary, evidence_count, signal, last_seen, rule_id, row["id"]),
+            )
+            _get().commit()
+            return int(row["id"])
+        cur = _get().execute(
+            "INSERT INTO wiki_observations (kind, target, action, summary, evidence_count, signal,"
+            " first_seen, last_seen, status, rule_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)",
+            (kind, target, action, summary, evidence_count, signal, now, last_seen, rule_id),
+        )
+        _get().commit()
+        return int(cur.lastrowid)
+
+
+def list_observations() -> list[dict]:
+    rows = _get().execute(
+        "SELECT * FROM wiki_observations ORDER BY signal DESC, last_seen DESC"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_observation(obs_id: int) -> dict | None:
+    row = _get().execute("SELECT * FROM wiki_observations WHERE id = ?", (obs_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def dismiss_observation(obs_id: int) -> None:
+    with _lock:
+        _get().execute("UPDATE wiki_observations SET status = 'dismissed' WHERE id = ?", (obs_id,))
+        _get().commit()
+
+
+def mark_observation_converted(obs_id: int, rule_id: int) -> None:
+    with _lock:
+        _get().execute("UPDATE wiki_observations SET status = 'converted', rule_id = ? WHERE id = ?",
+                       (rule_id, obs_id))
+        _get().commit()
+
+
+# --- Proposals ---------------------------------------------------------------
+
+def add_proposal(*, source: str, label: str, summary: str, rationale: str, downside: str,
+                 evidence_json: str, proposed_skill_md: str) -> int:
+    with _lock:
+        cur = _get().execute(
+            "INSERT INTO rule_proposals (source, label, summary, rationale, downside,"
+            " evidence_json, proposed_skill_md, status, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+            (source, label, summary, rationale, downside, evidence_json, proposed_skill_md, time.time()),
+        )
+        _get().commit()
+        return int(cur.lastrowid)
+
+
+def list_proposals(status: str = "pending") -> list[dict]:
+    rows = _get().execute(
+        "SELECT * FROM rule_proposals WHERE status = ? ORDER BY created_at DESC", (status,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_proposal(proposal_id: int) -> dict | None:
+    row = _get().execute("SELECT * FROM rule_proposals WHERE id = ?", (proposal_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def approve_proposal(proposal_id: int, rule_id: int) -> None:
+    with _lock:
+        _get().execute("UPDATE rule_proposals SET status = 'approved', rule_id = ? WHERE id = ?",
+                       (rule_id, proposal_id))
+        _get().commit()
+
+
+def reject_proposal(proposal_id: int, suppress_days: int = 30) -> None:
+    with _lock:
+        _get().execute(
+            "UPDATE rule_proposals SET status = 'rejected', rejected_until = ? WHERE id = ?",
+            (time.time() + suppress_days * 86400, proposal_id),
+        )
+        _get().commit()
+
+
+def has_duplicate_proposal(proposed_skill_md: str) -> bool:
+    norm = (proposed_skill_md or "").strip().lower()
+    if not norm:
+        return False
+    rows = _get().execute(
+        "SELECT proposed_skill_md, status, rejected_until FROM rule_proposals"
+    ).fetchall()
+    now = time.time()
+    for r in rows:
+        if (r["proposed_skill_md"] or "").strip().lower() != norm:
+            continue
+        if r["status"] == "approved":
+            return True
+        if r["status"] == "pending":
+            return True
+        if r["status"] == "rejected" and r["rejected_until"] and r["rejected_until"] > now:
+            return True
+    return False
+
+
+def identical_rule_exists(parsed_json: str) -> bool:
+    return any(r["parsed_json"] == parsed_json for r in list_rules())
