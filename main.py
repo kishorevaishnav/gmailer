@@ -114,32 +114,7 @@ def api_queue(max_results: int = config.DEFAULT_BATCH, page_token: str | None = 
     max_results = max(1, min(max_results, config.MAX_BATCH))
     items, bundles, next_page_token = _run(queue_module.build_queue, service, max_results, page_token)
 
-    # Auto-delete: any message from a persisted blocked sender is trashed now and
-    # never surfaced, so new mail from them disappears on every pull. Promo-only
-    # vendors ("promo auto-delete") are trashed only when the mail is PROMO-labelled.
-    blocked = {b["email"] for b in store.list_blocked()}
-    promo_blocked = {b["email"] for b in store.list_promo_blocked()}
-    kept: list[dict] = []
-    doomed: list[dict] = []
-    for item in items:
-        email = (item.get("sender_email") or "").strip().lower()
-        if not email:
-            kept.append(item)
-            continue
-        if email in blocked:
-            doomed.append(item)
-        elif email in promo_blocked and item.get("promo"):
-            doomed.append(item)
-        else:
-            kept.append(item)
-    auto_deleted = 0
-    if doomed:
-        failed = gmail_service.bulk_execute(service, [d["id"] for d in doomed], gmail_service.trash)
-        auto_deleted = len(doomed) - len(failed)
-        for d in doomed:
-            if d["id"] not in failed:
-                store.remove_skipped(d["id"])  # keep "skipped" state coherent
-
+    kept, auto_trashed, auto_starred, auto_skipped = _apply_rules(service, items)
     items = kept
     for item in items:
         # Hydrate cached summaries (and bodies) so reloads and group views
@@ -159,8 +134,9 @@ def api_queue(max_results: int = config.DEFAULT_BATCH, page_token: str | None = 
         "queried_count": max_results,
         "cache_count": store.cache_count(),
         "next_page_token": next_page_token,
-        "auto_deleted": auto_deleted,
-        "blocked_count": len(blocked),
+        "auto_trashed": auto_trashed,
+        "auto_starred": auto_starred,
+        "auto_skipped": auto_skipped,
     }
 
 
@@ -392,6 +368,71 @@ def _run_bulk(service, fn, req: BulkRequest, action: str):
         "failed": failed,
         "undo": {"action": action, "message_ids": req.message_ids},
     }
+
+
+def _apply_rules(service, items: list[dict]) -> tuple[list[dict], int, int, int]:
+    """Apply enabled rules in precedence order (first match wins) to a queue
+    batch. Trash/star go through Gmail in bulk; skip hides locally. Auto-actions
+    leave a trace row so rules stay anchored to the mail they acted on."""
+    from backend.rules import frequency_map, match_item
+
+    enabled = [r for r in store.list_rules() if r["enabled"]]
+    if not enabled:
+        return items, 0, 0, 0
+    enabled.sort(key=lambda r: r["precedence"])
+    freq = frequency_map(store.traces_since(config.TRACE_WINDOW_SECONDS))
+    ctx = {"frequency": freq}
+
+    kept, trash_ids, star_ids, skip_items = [], [], [], []
+    fired = []  # (item, rule)
+    for it in items:
+        hit = next((r for r in enabled if match_item(r["parsed"], it, ctx)), None)
+        if hit is None:
+            kept.append(it)
+            continue
+        fired.append((it, hit))
+        if hit["parsed"]["action"] == "trash":
+            trash_ids.append(it["id"])
+        elif hit["parsed"]["action"] == "star":
+            star_ids.append(it["id"])
+        else:
+            skip_items.append(it)
+
+    failed_trash = gmail_service.bulk_execute(service, trash_ids, gmail_service.trash) if trash_ids else []
+    trash_done = [i for i in trash_ids if i not in failed_trash]
+    failed_star = gmail_service.bulk_execute(service, star_ids, gmail_service.star) if star_ids else []
+    star_done = [i for i in star_ids if i not in failed_star]
+    for it in skip_items:
+        store.add_skipped(it)
+
+    # Failed trash/star ops don't get credited and the message stays in the
+    # queue instead of silently evaporating.
+    id_map = {it["id"]: it for it in items}
+    for mid in failed_trash + failed_star:
+        if mid in id_map:
+            kept.append(id_map[mid])
+
+    for it, rule in fired:
+        action = rule["parsed"]["action"]
+        done = (
+            (action == "trash" and it["id"] in trash_done)
+            or (action == "star" and it["id"] in star_done)
+            or action == "skip"
+        )
+        if not done:
+            continue
+        store.add_trace(
+            message_id=it["id"],
+            sender_email=it.get("sender_email"),
+            sender_name=it.get("sender_name"),
+            subject=it.get("subject"),
+            promo=bool(it.get("promo")),
+            category=it.get("category"),
+            action=f"auto_{action}",
+            rule_id=rule["id"],
+        )
+
+    return (kept, len(trash_done), len(star_done), len(skip_items))
 
 
 @app.post("/api/bundles/{sender_key}/trash")
