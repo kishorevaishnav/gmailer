@@ -573,10 +573,17 @@ def _todo_row_to_dict(row) -> dict:
     d["note"] = row["note"] or ""
     d["position"] = row["position"]
     d["added_at"] = row["added_at"]
+    try:
+        d["gtask_id"] = row["gtask_id"]
+        d["gtask_list"] = row["gtask_list"] or "@default"
+    except (IndexError, KeyError):
+        d["gtask_id"] = None
+        d["gtask_list"] = "@default"
     return d
 
 
-def add_todo(item: dict, due_date: str | None = None, note: str = "") -> dict | None:
+def add_todo(item: dict, due_date: str | None = None, note: str = "",
+             gtask_id: str | None = None, gtask_list: str = "@default") -> dict | None:
     mid = (item or {}).get("id")
     if not mid:
         return None
@@ -589,15 +596,27 @@ def add_todo(item: dict, due_date: str | None = None, note: str = "") -> dict | 
                 conn.execute("UPDATE todos SET due_date = ? WHERE id = ?", (due_date or None, mid))
             if note:
                 conn.execute("UPDATE todos SET note = ? WHERE id = ?", (note, mid))
+            if gtask_id:
+                conn.execute("UPDATE todos SET gtask_id = ?, gtask_list = ? WHERE id = ?",
+                             (gtask_id, gtask_list or "@default", mid))
             conn.commit()
             return _todo_row_to_dict(conn.execute("SELECT * FROM todos WHERE id = ?", (mid,)).fetchone())
         pos = conn.execute("SELECT COALESCE(MAX(position), 0) + 1 FROM todos").fetchone()[0]
         conn.execute(
-            "INSERT INTO todos (id, item, due_date, note, position, added_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (mid, json.dumps(item, ensure_ascii=False), due_date or None, note or "", int(pos), now),
+            "INSERT INTO todos (id, item, due_date, note, position, added_at, gtask_id, gtask_list)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (mid, json.dumps(item, ensure_ascii=False), due_date or None, note or "",
+             int(pos), now, gtask_id, gtask_list or "@default"),
         )
         conn.commit()
         return _todo_row_to_dict(conn.execute("SELECT * FROM todos WHERE id = ?", (mid,)).fetchone())
+
+
+def set_gtask(message_id: str, gtask_id: str | None, gtask_list: str = "@default") -> None:
+    with _lock:
+        _get().execute("UPDATE todos SET gtask_id = ?, gtask_list = ? WHERE id = ?",
+                       (gtask_id, gtask_list or "@default", message_id))
+        _get().commit()
 
 
 def get_todo(message_id: str) -> dict | None:

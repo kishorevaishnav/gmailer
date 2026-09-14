@@ -70,6 +70,17 @@ def test_todo_reorder():
     assert [t["position"] for t in store.list_todos()] == [1, 2, 3]
 
 
+def test_todo_google_task_link():
+    store.add_todo(_item("m1"))
+    assert store.get_todo("m1")["gtask_id"] is None
+    store.set_gtask("m1", "task-123", "@default")
+    row = store.get_todo("m1")
+    assert row["gtask_id"] == "task-123"
+    assert row["gtask_list"] == "@default"
+    store.set_gtask("m1", "task-456")
+    assert store.get_todo("m1")["gtask_id"] == "task-456"
+
+
 def test_todo_remove():
     store.add_todo(_item("m1"))
     store.add_todo(_item("m2"))

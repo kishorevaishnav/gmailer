@@ -22,6 +22,7 @@ const state = {
   skippedIds: new Set(),  // ids hidden "for now" (persisted server-side)
   skippedItems: [],       // metadata for those hidden emails
   todoIds: new Set(),     // ids parked on the TODO page (never deletable)
+  pendingTodoId: null,    // email awaiting due-date confirmation in the modal
   searchQuery: "",        // active search text ("" = no search)
   searchResults: null,    // null = group view; array = search results view
   nextPageToken: null,    // Gmail pagination token for "load next batch"
@@ -63,6 +64,7 @@ const el = {
   themeBtn: $("themeBtn"), themeIconMoon: $("themeIconMoon"), themeIconSun: $("themeIconSun"), themeIconApple: $("themeIconApple"),
   position: $("position"), positionTotal: $("positionTotal"),
   undoTopBtn: $("undoTopBtn"), reloadBtn: $("reloadBtn"), clearCacheBtn: $("clearCacheBtn"), todoCount: $("todoCount"), searchInput: $("searchInput"),
+  todoModal: $("todoModal"), todoModalSub: $("todoModalSub"), todoDueInput: $("todoDueInput"), todoModalCancel: $("todoModalCancel"), todoModalSave: $("todoModalSave"),
   toasts: $("toasts"),
   emptyScreen: $("emptyScreen"), emptyStat: $("emptyStat"), emptyReload: $("emptyReload"),
   groupHeader: $("groupHeader"), groupTitle: $("groupTitle"), groupCount: $("groupCount"), groupOverview: $("groupOverview"), bulkDeleteBtn: $("bulkDeleteBtn"), bulkArchiveBtn: $("bulkArchiveBtn"), emailCards: $("emailCards"), categoryChips: $("categoryChips"), categoryInput: $("categoryInput"), categoryAddBtn: $("categoryAddBtn"), categoriesCount: $("categoriesCount"),
@@ -1052,24 +1054,56 @@ function refreshMainView() {
 }
 
 /* ───────────────────────────── Actions ─────────────────────────── */
-async function toggleTodo(id) {
+function openTodoModal(id) {
   const item = currentItemOf(id);
   if (!item) { toast("That email is no longer in the queue", "err", { duration: 2000 }); return; }
+  state.pendingTodoId = id;
+  el.todoModalSub.textContent = item.subject || "(no subject)";
+  el.todoDueInput.value = "";
+  el.todoModal.classList.remove("hidden");
+  el.todoModal.classList.add("flex");
+  setTimeout(() => el.todoDueInput.focus(), 50);
+}
+
+function closeTodoModal() {
+  state.pendingTodoId = null;
+  el.todoModal.classList.add("hidden");
+  el.todoModal.classList.remove("flex");
+}
+
+async function confirmTodoModal() {
+  const id = state.pendingTodoId;
+  const item = id ? currentItemOf(id) : null;
+  if (!item) { closeTodoModal(); return; }
   try {
-    if (state.todoIds.has(id)) {
-      await api("/api/todos/remove", { method: "POST", body: JSON.stringify({ id }) });
-      state.todoIds.delete(id);
-      toast("Removed from TODO", "info", { duration: 1800 });
-    } else {
-      await api("/api/todos/add", { method: "POST", body: JSON.stringify({ item }) });
-      state.todoIds.add(id);
-      toast("Labeled TODO in Gmail + parked on the TODO page", "ok", { duration: 2600 });
-    }
-    renderSidebar();
-    renderGroupView();
+    await api("/api/todos/add", {
+      method: "POST",
+      body: JSON.stringify({ item, due_date: el.todoDueInput.value || null }),
+    });
+    state.todoIds.add(id);
+    closeTodoModal();
+    toast("Google Task created + parked on the TODO page", "ok", { duration: 2600 });
+    refreshMainView();
+  } catch (e) {
+    toast(`Todo failed: ${e.message}`, "err", { duration: 5000 });
+  }
+}
+
+async function untodoTodo(id) {
+  try {
+    await api("/api/todos/remove", { method: "POST", body: JSON.stringify({ id }) });
+    state.todoIds.delete(id);
+    toast("Removed from TODO (Google Task deleted too)", "info", { duration: 2000 });
+    refreshMainView();
   } catch (e) {
     toast(`Todo failed: ${e.message}`, "err", { duration: 3000 });
   }
+}
+
+async function toggleTodo(id) {
+  if (!id) { toast("Nothing to park — open a group first", "info", { duration: 1600 }); return; }
+  if (state.todoIds.has(id)) untodoTodo(id);
+  else openTodoModal(id);
 }
 
 async function actOn(action, id) {
@@ -1702,6 +1736,13 @@ if (el.searchInput) {
     else if (e.key === "Escape") { e.preventDefault(); el.searchInput.blur(); exitSearch(); }
   });
 }
+el.todoModalSave.addEventListener("click", confirmTodoModal);
+el.todoModalCancel.addEventListener("click", closeTodoModal);
+el.todoModal.addEventListener("click", (e) => { if (e.target === el.todoModal) closeTodoModal(); });
+el.todoDueInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); confirmTodoModal(); }
+  else if (e.key === "Escape") { e.preventDefault(); closeTodoModal(); }
+});
 el.categoryAddBtn.addEventListener("click", addCategory);
 el.categoryInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); addCategory(); }

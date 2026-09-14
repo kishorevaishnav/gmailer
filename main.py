@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from backend import ai_summary, auth, config, gmail_service, store
+from backend import gtasks
 from backend import queue as queue_module
 from backend import wiki as wiki_module
 from backend.rules import RuleParseError, parse_skill_md
@@ -287,9 +288,11 @@ def api_todos():
 def api_todos_add(req: TodoAddRequest):
     if not (req.item or {}).get("id"):
         raise HTTPException(status_code=400, detail="item.id required")
-    service = require_service()
-    _run(gmail_service.apply_todo_label, service, req.item["id"])
-    row = store.add_todo(req.item, _check_due_date(req.due_date), req.note or "")
+    require_service()
+    due = _check_due_date(req.due_date)
+    task = _run(gtasks.create_task, req.item, due)
+    row = store.add_todo(req.item, due, req.note or "",
+                         gtask_id=task.get("id"), gtask_list=gtasks.DEFAULT_LIST)
     itm = req.item or {}
     store.add_trace(
         message_id=itm.get("id"), action="todo_added", rule_id=None,
@@ -299,26 +302,28 @@ def api_todos_add(req: TodoAddRequest):
     return row
 
 
-def _drop_gmail_todo_label(service, message_id: str) -> None:
+def _drop_google_task(row: dict | None) -> None:
+    if not row or not row.get("gtask_id"):
+        return
     try:
-        gmail_service.remove_todo_label(service, message_id)
+        gtasks.delete_task(row["gtask_id"], row.get("gtask_list") or gtasks.DEFAULT_LIST)
     except Exception:
-        logger.warning("TODO Gmail label removal failed for %s", message_id)
+        logger.warning("Google Task deletion failed for %s", row.get("id"))
 
 
 @app.post("/api/todos/remove")
 def api_todos_remove(req: TodoRemoveRequest):
-    service = require_service()
-    _drop_gmail_todo_label(service, req.id)
+    require_service()
+    _drop_google_task(store.get_todo(req.id))
     store.remove_todo(req.id)
     return {"ok": True}
 
 
 @app.post("/api/todos/done")
 def api_todos_done(req: TodoRemoveRequest):
-    service = require_service()
-    _drop_gmail_todo_label(service, req.id)
+    require_service()
     row = store.get_todo(req.id)
+    _drop_google_task(row)
     if row:
         store.add_trace(
             message_id=row.get("id"), action="todo_done", rule_id=None,
@@ -337,6 +342,14 @@ def api_todo_update(todo_id: str, req: TodoPatchRequest):
     due = _check_due_date(data["due_date"]) if "due_date" in data else None
     row = store.update_todo(todo_id, due_date=due, due_date_set="due_date" in data,
                              note=data.get("note"))
+    if row and row.get("gtask_id"):
+        try:
+            tasklist = row.get("gtask_list") or gtasks.DEFAULT_LIST
+            new_task = gtasks.replace_task(row["gtask_id"], row, row.get("due_date"), tasklist)
+            store.set_gtask(todo_id, new_task.get("id"), tasklist)
+            row = store.get_todo(todo_id)
+        except Exception:
+            logger.warning("Google Task due-date sync failed for %s", todo_id)
     return row
 
 
