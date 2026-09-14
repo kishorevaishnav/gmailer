@@ -22,10 +22,6 @@ const state = {
   skippedIds: new Set(),  // ids hidden "for now" (persisted server-side)
   skippedItems: [],       // metadata for those hidden emails
   nextPageToken: null,    // Gmail pagination token for "load next batch"
-  blockedSenders: [],     // [{email, sender_name}] auto-deleted on every pull
-  showBlockedList: false,
-  promoBlockedSenders: [],  // [{email, sender_name}] promo mail auto-deleted on every pull
-  showPromoBlockedList: false,
   activeGroupKey: null,    // "singles" | bundle_key | null
   expandedCardId: null,    // currently inline-expanded email id
   activeCategory: "all",   // category filter
@@ -33,6 +29,14 @@ const state = {
   pendingOps: [],          // [{id, action, groupKey, label, count, status, ts}] background bulk ops
   visibleEmails: [],       // emails currently shown in the middle pane (group view)
   autoSelectedOnce: false, // pick a default group only on the very first queue load
+  rules: [],               // [{id, name, enabled, action, scope, parsed, precedence, skill_md}]
+  proposals: [],           // [{id, label, summary, rationale, downside, evidence_json, proposed_skill_md, status, observation_id}]
+  wikiObservations: [],    // [{id, kind, target, summary, evidence_count, signal, status}]
+  rulesWikiCollapsed: false,
+  editorOpen: false,       // editor view active in main pane
+  editorRuleId: null,      // rule being edited (null = new rule)
+  editorMarkdown: "",      // current editor content
+  editorApplyNow: false,
 };
 
 /* ───────────────────────────── Elements ────────────────────────── */
@@ -49,8 +53,8 @@ const el = {
   cacheInfo: $("cacheInfo"),
   skippedBtn: $("skippedBtn"), skippedCount: $("skippedCount"), skippedRestoreBtn: $("skippedRestoreBtn"),
   skipForNowBtn: $("skipForNowBtn"),
-  blockedBtn: $("blockedBtn"), blockedCount: $("blockedCount"), blockedList: $("blockedList"),
-  promoBlockedBtn: $("promoBlockedBtn"), promoBlockedCount: $("promoBlockedCount"), promoBlockedList: $("promoBlockedList"),
+  rulesWikiToggle: $("rulesWikiToggle"), rulesWikiBody: $("rulesWikiBody"), rulesWikiChevron: $("rulesWikiChevron"),
+  rulesBadge: $("rulesBadge"), proposalsList: $("proposalsList"), rulesList: $("rulesList"), wikiList: $("wikiList"), newRuleBtn: $("newRuleBtn"),
   loadMoreBtn: $("loadMoreBtn"),
   userChip: $("userChip"), logoutBtn: $("logoutBtn"),
   themeBtn: $("themeBtn"), themeIconMoon: $("themeIconMoon"), themeIconSun: $("themeIconSun"), themeIconApple: $("themeIconApple"),
@@ -59,6 +63,7 @@ const el = {
   toasts: $("toasts"),
   emptyScreen: $("emptyScreen"), emptyStat: $("emptyStat"), emptyReload: $("emptyReload"),
   groupHeader: $("groupHeader"), groupTitle: $("groupTitle"), groupCount: $("groupCount"), groupOverview: $("groupOverview"), bulkDeleteBtn: $("bulkDeleteBtn"), bulkArchiveBtn: $("bulkArchiveBtn"), emailCards: $("emailCards"), categoryChips: $("categoryChips"), categoryInput: $("categoryInput"), categoryAddBtn: $("categoryAddBtn"), categoriesCount: $("categoriesCount"),
+  normalView: $("normalView"), editorView: $("editorView"), editorTitle: $("editorTitle"), editorContent: $("editorContent"), editorErrors: $("editorErrors"), editorSave: $("editorSave"), editorCancel: $("editorCancel"), editorDelete: $("editorDelete"), editorApplyNow: $("editorApplyNow"),
 };
 
 /* ───────────────────────────── Utils ───────────────────────────── */
@@ -235,11 +240,12 @@ async function init() {
 async function loadQueue() {
   await showLoading("Pulling latest unread inbox…");
   try {
-    const [data, skippedRes, blockedRes, promoRes] = await Promise.all([
+    const [data, skippedRes, rulesRes, proposalsRes, wikiRes] = await Promise.all([
       api(`/api/queue?max_results=${BATCH}`),
       api("/api/skipped").catch(() => ({ items: [] })),
-      api("/api/blocked").catch(() => ({ items: [] })),
-      api("/api/promo-blocked").catch(() => ({ items: [] })),
+      api("/api/rules").catch(() => ({ items: [] })),
+      api("/api/proposals").catch(() => ({ items: [] })),
+      api("/api/wiki/observations").catch(() => ({ items: [] })),
     ]);
     const skipped = skippedRes.items || [];
     state.skippedIds = new Set(skipped.map((i) => i.id));
@@ -256,13 +262,18 @@ async function loadQueue() {
     state.fetching.clear();
     state.cacheCount = data.cache_count || 0;
     state.nextPageToken = data.next_page_token || null;
-    state.blockedSenders = blockedRes.items || [];
-    state.promoBlockedSenders = promoRes.items || [];
+    state.rules = rulesRes.items || [];
+    state.proposals = proposalsRes.items || [];
+    state.wikiObservations = wikiRes.items || [];
     showMain();
     if (state.queue.length === 0) { showEmpty(); return; }
     await renderAll(true);
-    if (data.auto_deleted) {
-      toast(`Auto-deleted ${data.auto_deleted} email${data.auto_deleted === 1 ? "" : "s"} from blocked / promo-deleted senders`, "info", { duration: 3000 });
+    if (data.auto_trashed || data.auto_starred || data.auto_skipped) {
+      const counts = [];
+      if (data.auto_trashed) counts.push(`${data.auto_trashed} trashed`);
+      if (data.auto_starred) counts.push(`${data.auto_starred} starred`);
+      if (data.auto_skipped) counts.push(`${data.auto_skipped} skipped`);
+      toast(`Rules auto-applied: ${counts.join(", ")}`, "info", { duration: 3500 });
     }
   } catch (e) {
     el.loadingText.textContent = `Failed to load queue: ${e.message}`;
@@ -286,11 +297,16 @@ async function loadMore() {
     state.cacheCount = data.cache_count || 0;
     showMain();
     renderSidebar();
+    await refreshRulesData();
     if (state.queue.length === 0) { showEmpty(); return; }
     renderGroupView();
     toast(`Loaded ${added.length} more · in queue: ${state.queue.length}`, "ok", { duration: 2000 });
-    if (data.auto_deleted) {
-      toast(`Auto-deleted ${data.auto_deleted} more from blocked / promo-deleted senders`, "info", { duration: 2600 });
+    if (data.auto_trashed || data.auto_starred || data.auto_skipped) {
+      const counts = [];
+      if (data.auto_trashed) counts.push(`${data.auto_trashed} trashed`);
+      if (data.auto_starred) counts.push(`${data.auto_starred} starred`);
+      if (data.auto_skipped) counts.push(`${data.auto_skipped} skipped`);
+      toast(`Rules auto-applied: ${counts.join(", ")}`, "info", { duration: 2600 });
     }
   } catch (e) {
     el.loadingText.textContent = `Failed to load more: ${e.message}`;
@@ -411,43 +427,125 @@ function renderSidebar() {
     el.skippedBtn.classList.add("hidden");
   }
 
-  const nBlock = state.blockedSenders.length;
-  if (nBlock) {
-    el.blockedCount.textContent = nBlock;
-    el.blockedBtn.classList.remove("hidden");
-    el.blockedList.innerHTML = state.blockedSenders.map((b) => `
-      <li class="flex items-center gap-2 text-[11px]">
-        <span class="min-w-0 flex-1 truncate text-red-600 dark:text-red-300 font-semibold">${esc(b.sender_name || b.email)}</span>
-        <span class="max-w-[40%] truncate text-[9px] text-slate-400 dark:text-slate-500">${esc(b.email)}</span>
-        <button data-unblock="${esc(b.email)}" class="shrink-0 rounded bg-slate-500/15 px-1.5 py-0.5 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-500/30 transition">unblock</button>
-      </li>`).join("");
-    el.blockedList.classList.toggle("hidden", !state.showBlockedList);
-  } else {
-    el.blockedBtn.classList.add("hidden");
-    el.blockedList.classList.add("hidden");
-  }
-
-  const nPromo = state.promoBlockedSenders.length;
-  if (nPromo) {
-    el.promoBlockedCount.textContent = nPromo;
-    el.promoBlockedBtn.classList.remove("hidden");
-    el.promoBlockedList.innerHTML = state.promoBlockedSenders.map((b) => `
-      <li class="flex items-center gap-2 text-[11px]">
-        <span class="min-w-0 flex-1 truncate text-amber-700 dark:text-amber-300 font-semibold">${esc(b.sender_name || b.email)}</span>
-        <span class="max-w-[40%] truncate text-[9px] text-slate-400 dark:text-slate-500">${esc(b.email)}</span>
-        <button data-unpromoblock="${esc(b.email)}" class="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition">off</button>
-      </li>`).join("");
-    el.promoBlockedList.classList.toggle("hidden", !state.showPromoBlockedList);
-  } else {
-    el.promoBlockedBtn.classList.add("hidden");
-    el.promoBlockedList.classList.add("hidden");
-  }
-
   el.loadMoreBtn.classList.toggle("hidden", !state.nextPageToken);
 
   renderPendingOps();
   renderGroups();
   renderCategoryChips();
+  renderRulesWiki();
+}
+
+function renderRulesWiki() {
+  if (state.rulesWikiCollapsed) {
+    el.rulesWikiBody.classList.add("hidden");
+    el.rulesWikiChevron.textContent = "▸";
+  } else {
+    el.rulesWikiBody.classList.remove("hidden");
+    el.rulesWikiChevron.textContent = "▾";
+  }
+  el.rulesWikiToggle.onclick = () => {
+    state.rulesWikiCollapsed = !state.rulesWikiCollapsed;
+    renderRulesWiki();
+  };
+
+  // Badge = pending proposals
+  const pending = state.proposals.filter((p) => p.status === "pending").length;
+  if (pending > 0) {
+    el.rulesBadge.textContent = pending;
+    el.rulesBadge.classList.remove("hidden");
+  } else {
+    el.rulesBadge.classList.add("hidden");
+  }
+
+  // Proposals
+  const proposals = state.proposals.filter((p) => p.status === "pending");
+  if (proposals.length) {
+    el.proposalsList.classList.remove("hidden");
+    el.proposalsList.innerHTML = proposals.map((p) => `
+      <div class="proposal-card">
+        <div class="flex items-center gap-1.5">
+          <span class="proposal-label">${esc(p.label)}</span>
+        </div>
+        <p class="proposal-summary">${esc(p.summary || "")}</p>
+        <div class="rule-actions">
+          <button data-propose="approve" data-id="${p.id}" class="btn-approve">Approve</button>
+          <button data-propose="edit" data-id="${p.id}" class="btn-edit">Edit skill</button>
+          <button data-propose="reject" data-id="${p.id}" class="btn-reject">Reject</button>
+        </div>
+        <div class="proposal-detail" id="proposal-detail-${p.id}">
+          ${p.rationale ? `<p class="proposal-rationale"><b>Why:</b> ${esc(p.rationale)}</p>` : ""}
+          ${p.downside ? `<p class="proposal-downside"><b>Risk:</b> ${esc(p.downside)}</p>` : ""}
+          ${p.evidence_json ? `<details class="proposal-evidence"><summary>Evidence</summary><pre style="margin:4px 0 0;font-size:9px;white-space:pre-wrap;">${esc(p.evidence_json)}</pre></details>` : ""}
+        </div>
+      </div>
+    `).join("");
+  } else {
+    el.proposalsList.classList.add("hidden");
+    el.proposalsList.innerHTML = "";
+  }
+
+  // Rules
+  if (state.rules.length) {
+    el.rulesList.classList.remove("hidden");
+    el.rulesList.innerHTML = state.rules.map((r) => {
+      const counts = r.parsed ? getRuleCounts(r.id) : { trash: 0, star: 0, skip: 0 };
+      const total = counts.trash + counts.star + counts.skip;
+      const actionLabel = r.parsed ? r.parsed.action : "?";
+      const name = r.parsed ? r.parsed.name : "Untitled";
+      return `
+        <li class="rule-card" data-rule-id="${r.id}">
+          <div class="flex items-center gap-2">
+            <span class="rule-name flex-1">${esc(name)}</span>
+            <span class="rule-meta">${actionLabel}${total > 0 ? ` · ${total}` : ""}</span>
+            <span class="flex items-center gap-0.5">
+              <button data-rule-move="up" data-id="${r.id}" class="btn-move" title="Move up">▲</button>
+              <button data-rule-move="down" data-id="${r.id}" class="btn-move" title="Move down">▼</button>
+            </span>
+            <button data-rule-toggle="${r.enabled ? 'on' : 'off'}" data-id="${r.id}" class="btn-toggle" title="${r.enabled ? 'Disable' : 'Enable'}">${r.enabled ? "●" : "○"}</button>
+          </div>
+          <div class="rule-actions">
+            <button data-rule-edit="${r.id}" class="btn-edit">Edit skill</button>
+            <button data-rule-apply="${r.id}" class="btn-apply">Apply now</button>
+            <button data-rule-delete="${r.id}" class="btn-delete">Delete</button>
+          </div>
+        </li>
+      `;
+    }).join("");
+  } else {
+    el.rulesList.classList.add("hidden");
+    el.rulesList.innerHTML = "";
+  }
+
+  // Wiki observations
+  if (state.wikiObservations.length) {
+    el.wikiList.classList.remove("hidden");
+    el.wikiList.innerHTML = state.wikiObservations.map((w) => {
+      const kindIcon = { sender: "⊕", keyword: "⊞", category: "◇", frequency: "∿" }[w.kind] || "?";
+      const status = w.status === "dismissed" ? "dismissed" : w.status === "converted" ? "converted" : "open";
+      return `
+        <div class="wiki-card">
+          <div class="flex items-center gap-1">
+            <span class="wiki-kind">${kindIcon}</span>
+            <span class="wiki-summary">${esc(w.summary || w.target)}</span>
+            <span class="text-[9px] text-slate-400 dark:text-slate-500">${status}</span>
+          </div>
+          <div class="wiki-meta">${esc(w.kind)} · signal ${(w.signal || 0).toFixed(2)} · ${w.evidence_count || 0} evidence</div>
+          <div class="wiki-actions">
+            <button data-wiki-create="${w.id}" class="btn-create">Create rule</button>
+            <button data-wiki-dismiss="${w.id}" class="btn-dismiss">Dismiss</button>
+          </div>
+        </div>
+      `;
+    }).join("");
+  } else {
+    el.wikiList.classList.add("hidden");
+    el.wikiList.innerHTML = "";
+  }
+}
+
+function getRuleCounts(ruleId) {
+  // Computed from traces; fall back to empty counts if not available
+  return { trash: 0, star: 0, skip: 0 };
 }
 
 function renderHistory() {
@@ -784,8 +882,8 @@ function emailCard(it) {
     <button data-cardact="star" data-id="${esc(it.id)}" class="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition">Star</button>
     <button data-cardact="skip" data-id="${esc(it.id)}" class="rounded bg-slate-500/15 px-2 py-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-500/30 transition">Skip</button>
     <button data-cardact="keep" data-id="${esc(it.id)}" class="rounded bg-slate-500/15 px-2 py-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-500/30 transition">Keep</button>
-    <button data-cardact="block" data-id="${esc(it.id)}" data-email="${esc(it.sender_email || "")}" data-name="${esc(sender)}" class="rounded bg-red-500/15 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition">Block</button>
-    ${it.promo ? `<button data-cardact="promoblock" data-id="${esc(it.id)}" data-email="${esc(it.sender_email || "")}" data-name="${esc(sender)}" class="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition">Auto-del promos</button>` : ""}`;
+    <button data-cardact="ruleBlock" data-id="${esc(it.id)}" class="rounded bg-red-500/15 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition">Block</button>
+    ${it.promo ? `<button data-cardact="rulePromoBlock" data-id="${esc(it.id)}" class="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition">Auto-del promos</button>` : ""}`;
 
   return `
     <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-3 transition group-card ${politics ? "opacity-60" : ""}" data-expand="${esc(it.id)}" data-expanded="${expanded}">
@@ -833,8 +931,8 @@ function detailHTML(it) {
       ${sumBlock}
       ${bodyHTML}
       <div class="mt-2 flex items-center gap-1.5">
-        <button data-cardact="block" data-id="${esc(it.id)}" data-email="${esc(it.sender_email || "")}" data-name="${esc(sender)}" class="rounded bg-red-500/15 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition">Block sender</button>
-        ${it.promo ? `<button data-cardact="promoblock" data-id="${esc(it.id)}" data-email="${esc(it.sender_email || "")}" data-name="${esc(sender)}" class="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition">Auto-del promos</button>` : ""}
+        <button data-cardact="ruleBlock" data-id="${esc(it.id)}" class="rounded bg-red-500/15 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition">Block sender</button>
+        ${it.promo ? `<button data-cardact="rulePromoBlock" data-id="${esc(it.id)}" class="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition">Auto-del promos</button>` : ""}
       </div>
     </div>`;
 }
@@ -1030,96 +1128,75 @@ async function restoreAllSkipped() {
   toast(`Brought back ${items.length} skipped email${items.length === 1 ? "" : "s"}`, "ok", { duration: 2200 });
 }
 
-async function blockSender(email, senderName) {
-  if (state.busy) return;
-  state.busy = true;
-  const norm = (email || "").toLowerCase();
+async function issueRuleBlock(id) {
+  const item = currentItemOf(id);
+  if (!item) { toast("This email is no longer in the queue", "err", { duration: 2000 }); return; }
+  const email = item.sender_email;
+  const name = item.sender_name || email;
+  if (!email) { toast("This email has no sender address", "err", { duration: 2200 }); return; }
+  const md = ruleMdForSender(email, name, false);
   try {
-    const res = await api("/api/blocked/add", {
-      method: "POST", body: JSON.stringify({ sender_email: norm, sender_name: senderName }),
-    });
-    if (!state.blockedSenders.some((b) => b.email === norm)) {
-      state.blockedSenders.push({ email: norm, sender_name: senderName || "" });
-    }
-    // The server just trashed all unread mail from this sender; drop it locally too.
-    const doomedIds = new Set(state.queue.filter((i) => (i.sender_email || "").toLowerCase() === norm).map((i) => i.id));
-    doomedIds.forEach((id) => state.detail.delete(id));
-    state.queue = state.queue.filter((i) => !doomedIds.has(i.id));
-    state.skippedItems = state.skippedItems.filter((i) => (i.sender_email || "").toLowerCase() !== norm);
-    state.skippedIds = new Set(state.skippedItems.map((i) => i.id));
-    if (state.index >= state.queue.length) state.index = Math.max(0, state.queue.length - 1);
-    invalidateGroups();
-    renderSidebar();
-    const purged = res.purged || 0;
-    toast(`Blocked ${senderName || norm} · purged ${purged} unread, auto-deletes the rest forever`, "ok", { duration: 3800 });
-    if (state.queue.length === 0) { showEmpty(); return; }
-    renderGroupView();
+    const res = await api("/api/rules", { method: "POST", body: JSON.stringify({ markdown: md }) });
+    toast(`Blocked ${name} — rule created`, "ok", { duration: 2800 });
+    await refreshRulesData();
   } catch (e) {
     toast(`Block failed: ${e.message}`, "err", { duration: 4000 });
-  } finally {
-    state.busy = false;
   }
 }
 
-async function unblockSender(email) {
+async function issueRulePromoBlock(id) {
+  const item = currentItemOf(id);
+  if (!item) { toast("This email is no longer in the queue", "err", { duration: 2000 }); return; }
+  const email = item.sender_email;
+  const name = item.sender_name || email;
+  if (!email) { toast("This email has no sender address", "err", { duration: 2200 }); return; }
+  if (!item.promo) { toast("Only promo emails can be auto-deleted (use Block for the whole sender)", "err", { duration: 2600 }); return; }
+  const md = ruleMdForSender(email, name, true);
   try {
-    await api("/api/blocked/remove", { method: "POST", body: JSON.stringify({ sender_email: email }) });
+    const res = await api("/api/rules", { method: "POST", body: JSON.stringify({ markdown: md }) });
+    toast(`Promo auto-delete ON for ${name} — rule created`, "ok", { duration: 2800 });
+    await refreshRulesData();
   } catch (e) {
-    toast(`Unblock failed: ${e.message}`, "err", { duration: 3000 });
-    return;
-  }
-  state.blockedSenders = state.blockedSenders.filter((b) => b.email !== email);
-  renderSidebar();
-  toast("Unblocked — matches from this sender will appear again", "info", { duration: 2400 });
-}
-
-async function promoBlockSender(email, senderName) {
-  if (state.busy) return;
-  state.busy = true;
-  const norm = (email || "").toLowerCase();
-  if (!norm) { toast("This email has no sender address to mark", "err", { duration: 2200 }); state.busy = false; return; }
-  try {
-    const res = await api("/api/promo-blocked/add", {
-      method: "POST", body: JSON.stringify({ sender_email: norm, sender_name: senderName }),
-    });
-    if (!state.promoBlockedSenders.some((b) => b.email === norm)) {
-      state.promoBlockedSenders.push({ email: norm, sender_name: senderName || "" });
-    }
-    // The server trashed the vendor's currently-unread PROMO mail; drop those locally.
-    const doomedIds = new Set(state.queue.filter((i) =>
-      (i.sender_email || "").toLowerCase() === norm && i.promo
-    ).map((i) => i.id));
-    doomedIds.forEach((id) => state.detail.delete(id));
-    state.queue = state.queue.filter((i) => !doomedIds.has(i.id));
-    state.skippedItems = state.skippedItems.filter((i) =>
-      (i.sender_email || "").toLowerCase() !== norm || !i.promo
-    );
-    state.skippedIds = new Set(state.skippedItems.map((i) => i.id));
-    if (state.index >= state.queue.length) state.index = Math.max(0, state.queue.length - 1);
-    invalidateGroups();
-    renderSidebar();
-    const purged = res.purged || 0;
-    const skippedN = res.skipped || 0;
-    toast(`Promo auto-delete ON for ${senderName || norm} · purged ${purged} promos now, future promos deleted (${skippedN} non-promo kept)`, "ok", { duration: 4200 });
-    if (state.queue.length === 0) { showEmpty(); return; }
-    renderGroupView();
-  } catch (e) {
-    toast(`Promo auto-delete failed: ${e.message}`, "err", { duration: 4000 });
-  } finally {
-    state.busy = false;
+    toast(`Promo block failed: ${e.message}`, "err", { duration: 4000 });
   }
 }
 
-async function unpromoBlockSender(email) {
+function ruleMdForSender(email, name, promoOnly) {
+  const scope = promoOnly ? "promo_only" : "all_mail";
+  const noun = name || email;
+  const title = promoOnly ? `Promos from ${noun}` : `Block ${noun}`;
+  const about = promoOnly
+    ? "Automatically delete promo emails from this sender."
+    : "Automatically delete all email from this sender.";
+  return [
+    "---",
+    `name: ${title}`,
+    "enabled: true",
+    "action: trash",
+    `scope: ${scope}`,
+    "---",
+    "## match",
+    `sender: ${email}`,
+    "",
+    "## about",
+    about,
+  ].join("\n");
+}
+
+async function refreshRulesData() {
   try {
-    await api("/api/promo-blocked/remove", { method: "POST", body: JSON.stringify({ sender_email: email }) });
+    const [rulesRes, proposalsRes, wikiRes] = await Promise.all([
+      api("/api/rules"),
+      api("/api/proposals"),
+      api("/api/wiki/observations"),
+    ]);
+    state.rules = rulesRes.items || [];
+    state.proposals = proposalsRes.items || [];
+    state.wikiObservations = wikiRes.items || [];
+    renderRulesWiki();
   } catch (e) {
-    toast(`Failed to disable promo auto-delete: ${e.message}`, "err", { duration: 3000 });
-    return;
+    // non-fatal
   }
-  state.promoBlockedSenders = state.promoBlockedSenders.filter((b) => b.email !== email);
-  renderSidebar();
-  toast("Promo auto-delete OFF — promos from this vendor will appear again", "info", { duration: 2400 });
 }
 
 /* ───────────────────────────── History / undo ──────────────────── */
@@ -1183,15 +1260,10 @@ function doAction(action) {
   actOn(action, id);
 }
 function issueBlock() {
-  const it = currentTargetItem();
-  if (it && it.sender_email) blockSender(it.sender_email, it.sender_name);
-  else toast("This email has no sender address to block", "err", { duration: 2200 });
+  issueRuleBlock(currentTargetId());
 }
 function issuePromoBlock() {
-  const it = currentTargetItem();
-  if (!it || !it.sender_email) { toast("This email has no sender address to mark", "err", { duration: 2200 }); return; }
-  if (!it.promo) { toast("Only promo emails can be marked for auto-delete (use Block for the whole sender)", "err", { duration: 2600 }); return; }
-  promoBlockSender(it.sender_email, it.sender_name);
+  issueRulePromoBlock(currentTargetId());
 }
 function groupKeys() {
   const keys = [];
@@ -1269,8 +1341,15 @@ el.themeBtn.addEventListener("click", toggleTheme);
 el.skipForNowBtn.addEventListener("click", () => skipForNow());
 el.skippedBtn.addEventListener("click", restoreAllSkipped);
 el.skippedRestoreBtn.addEventListener("click", restoreAllSkipped);
-el.blockedBtn.addEventListener("click", () => { state.showBlockedList = !state.showBlockedList; renderSidebar(); });
-el.promoBlockedBtn.addEventListener("click", () => { state.showPromoBlockedList = !state.showPromoBlockedList; renderSidebar(); });
+el.newRuleBtn.addEventListener("click", () => openEditor(null));
+el.rulesWikiToggle.addEventListener("click", () => {
+  state.rulesWikiCollapsed = !state.rulesWikiCollapsed;
+  renderRulesWiki();
+});
+el.editorCancel.addEventListener("click", cancelEditor);
+el.editorSave.addEventListener("click", saveEditor);
+el.editorDelete.addEventListener("click", deleteEditorRule);
+el.editorApplyNow.addEventListener("change", (e) => { state.editorApplyNow = e.target.checked; });
 applyThemeUI();
 el.bulkDeleteBtn.addEventListener("click", () => { if (state.activeGroupKey && state.activeGroupKey !== "singles") queueBulk("trash", state.activeGroupKey); else toast("Open a group to bulk delete", "info", { duration: 1600 }); });
 el.bulkArchiveBtn.addEventListener("click", () => { if (state.activeGroupKey && state.activeGroupKey !== "singles") queueBulk("archive", state.activeGroupKey); else toast("Open a group to bulk archive", "info", { duration: 1600 }); });
@@ -1308,19 +1387,38 @@ document.addEventListener("click", (e) => {
   const id = b.dataset.id;
   const act = b.dataset.cardact;
   if (act === "skip") skipForNowById(id);
-  else if (act === "block") blockSender(b.dataset.email || (currentItemOf(id) || {}).sender_email || "", b.dataset.name);
-  else if (act === "promoblock") promoBlockSender(b.dataset.email || (currentItemOf(id) || {}).sender_email || "", b.dataset.name);
+  else if (act === "ruleBlock") issueRuleBlock(id);
+  else if (act === "rulePromoBlock") issueRulePromoBlock(id);
   else if (act === "keep") keepEmail(id);
   else actOn(act, id);
 });
 
 document.addEventListener("click", (e) => {
-  const bs = e.target.closest("[data-blocksender]");
-  if (bs) { blockSender(bs.dataset.blocksender, bs.dataset.blocksendername); return; }
-  const ub = e.target.closest("[data-unblock]");
-  if (ub) { unblockSender(ub.dataset.unblock); return; }
-  const upb = e.target.closest("[data-unpromoblock]");
-  if (upb) { unpromoBlockSender(upb.dataset.unpromoblock); }
+  // Proposals
+  const pa = e.target.closest("[data-propose]");
+  if (pa) {
+    const id = parseInt(pa.dataset.id, 10);
+    if (pa.dataset.propose === "approve") approveProposal(id);
+    else if (pa.dataset.propose === "edit") editProposal(id);
+    else if (pa.dataset.propose === "reject") rejectProposal(id);
+    return;
+  }
+  // Rule actions
+  const ra = e.target.closest("[data-rule-toggle]");
+  if (ra) { toggleRule(parseInt(ra.dataset.id, 10)); return; }
+  const re = e.target.closest("[data-rule-edit]");
+  if (re) { openEditor(parseInt(re.dataset.ruleEdit, 10)); return; }
+  const ra2 = e.target.closest("[data-rule-apply]");
+  if (ra2) { applyRuleNow(parseInt(ra2.dataset.ruleApply, 10)); return; }
+  const rd = e.target.closest("[data-rule-delete]");
+  if (rd) { deleteRule(parseInt(rd.dataset.ruleDelete, 10)); return; }
+  const rm = e.target.closest("[data-rule-move]");
+  if (rm) { moveRule(parseInt(rm.dataset.id, 10), rm.dataset.ruleMove); return; }
+  // Wiki
+  const wa = e.target.closest("[data-wiki-create]");
+  if (wa) { createRuleFromWiki(parseInt(wa.dataset.wikiCreate, 10)); return; }
+  const wd = e.target.closest("[data-wiki-dismiss]");
+  if (wd) { dismissWiki(parseInt(wd.dataset.wikiDismiss, 10)); return; }
 });
 
 document.addEventListener("visibilitychange", () => {
