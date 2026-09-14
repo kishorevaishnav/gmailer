@@ -1,0 +1,113 @@
+/* ═══════════════════════════════════════════════════════════════
+   Email Viewer — high-contrast, low-color (slate/gray + indigo only)
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  --indigo: #4f46e5;
+}
+
+html, body { height: 100%; }
+
+/* Scrollbar — slate only */
+#domainList::-webkit-scrollbar,
+#detailView::-webkit-scrollbar { width: 8px; }
+#domainList::-webkit-scrollbar-thumb,
+#detailView::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
+#domainList::-webkit-scrollbar-track,
+#detailView::-webkit-scrollbar-track { background: transparent; }
+
+/* Domain group card */
+.domain-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.domain-card[aria-expanded="true"] {
+  border-color: #6366f1;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 20px rgba(79,70,229,.08);
+}
+
+/* Domain summary box — single-color, high readability */
+.domain-summary {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-left: 3px solid #4f46e5;
+  border-radius: 8px;
+}
+
+/* AI indicator badge */
+.ai-badge {
+  background: #eef2ff;
+  color: #4338ca;
+}
+
+/* Email-level AI summary box — grayscale bordered */
+.email-ai-box {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+/* Shimmer placeholders while data preloads */
+.shimmer {
+  border-radius: 6px;
+  background: linear-gradient(90deg, #e2e8f0 25%, #f8fafc 37%, #e2e8f0 63%);
+  background-size: 400% 100%;
+  animation: shimmer 1.2s ease infinite;
+}
+@keyframes shimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position: 0 0; }
+}
+
+/* Category chip */
+.cat-chip {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #475569;
+}
+.cat-chip[aria-pressed="true"] {
+  border-color: #4f46e5;
+  background: #eef2ff;
+  color: #3730a3;
+}
+
+/* Email row */
+.email-row {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color .12s ease, background .12s ease;
+}
+.email-row:hover { border-color: #94a3b8; background: #f8fafc; }
+.email-row[aria-selected="true"] {
+  border-color: #4f46e5;
+  background: #eef2ff;
+}
+
+/* Collapse chevron rotation */
+.chevron { transition: transform .15s ease; }
+.chevron.rotate-180 { transform: rotate(180deg); }
+
+/* Toast */
+.toast {
+  animation: toast-in .18s ease;
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 10px 25px rgba(0,0,0,.08);
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 13px;
+  color: #0f172a;
+}
+@keyframes toast-in {
+  from { transform: translate(-50%, 8px); opacity: 0; }
+  to   { transform: translate(-50%, 0); opacity: 1; }
+}
