@@ -54,6 +54,17 @@ CREATE TABLE IF NOT EXISTS skipped (
     skipped_at  REAL
 );
 
+CREATE TABLE IF NOT EXISTS todos (
+    id          TEXT PRIMARY KEY,
+    item        TEXT NOT NULL,
+    due_date    TEXT,
+    note        TEXT DEFAULT '',
+    position    INTEGER NOT NULL,
+    added_at    REAL,
+    gtask_id    TEXT,
+    gtask_list  TEXT
+);
+
 CREATE TABLE IF NOT EXISTS blocked (
     email       TEXT PRIMARY KEY,
     sender_name TEXT,
@@ -159,6 +170,12 @@ def _get() -> sqlite3.Connection:
             _conn.execute("ALTER TABLE rule_proposals ADD COLUMN observation_id INTEGER")
         except (sqlite3.OperationalError, sqlite3.ProgrammingError):
             pass  # column already present (new schema or a prior run)
+        for _col in ("ALTER TABLE todos ADD COLUMN gtask_id TEXT",
+                     "ALTER TABLE todos ADD COLUMN gtask_list TEXT"):
+            try:
+                _conn.execute(_col)
+            except (sqlite3.OperationalError, sqlite3.ProgrammingError):
+                pass
         _seed_default_categories()
         _conn.commit()
     return _conn
@@ -230,18 +247,7 @@ def save_message(msg: dict, summary: dict | None = None) -> None:
         logger.warning("store.save_message failed: %s", exc)
 
 
-def load_message(message_id: str) -> dict | None:
-    """Return a full-message dict (same shape as get_full) if cached."""
-    try:
-        with _lock:
-            row = _get().execute(
-                "SELECT * FROM messages WHERE id = ?", (message_id,)
-            ).fetchone()
-    except Exception as exc:
-        logger.warning("store.load failed: %s", exc)
-        return None
-    if row is None:
-        return None
+def _message_row_to_dict(row) -> dict:
     msg = {
         "id": row["id"],
         "sender_name": row["sender_name"],
@@ -263,6 +269,41 @@ def load_message(message_id: str) -> dict | None:
     return msg
 
 
+def load_message(message_id: str) -> dict | None:
+    """Return a full-message dict (same shape as get_full) if cached."""
+    try:
+        with _lock:
+            row = _get().execute(
+                "SELECT * FROM messages WHERE id = ?", (message_id,)
+            ).fetchone()
+    except Exception as exc:
+        logger.warning("store.load failed: %s", exc)
+        return None
+    if row is None:
+        return None
+    return _message_row_to_dict(row)
+
+
+def search_messages(query: str, limit: int = 100) -> list[dict]:
+    q = (query or "").strip()
+    if not q:
+        return []
+    like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    cols = "sender_name LIKE ? ESCAPE '\\' OR sender_email LIKE ? ESCAPE '\\'" \
+        " OR subject LIKE ? ESCAPE '\\' OR snippet LIKE ? ESCAPE '\\'" \
+        " OR body_text LIKE ? ESCAPE '\\'"
+    try:
+        with _lock:
+            rows = _get().execute(
+                f"SELECT * FROM messages WHERE {cols} ORDER BY internal_date_ms DESC LIMIT ?",
+                (like, like, like, like, like, max(1, min(int(limit), 500))),
+            ).fetchall()
+    except Exception as exc:
+        logger.warning("store.search failed: %s", exc)
+        return []
+    return [_message_row_to_dict(r) for r in rows]
+
+
 def list_messages(limit: int = 500, offset: int = 0) -> list[dict]:
     """Return every cached message (DB-backed, no Gmail/OAuth needed).
 
@@ -281,25 +322,7 @@ def list_messages(limit: int = 500, offset: int = 0) -> list[dict]:
         logger.warning("store.list_messages failed: %s", exc)
         return out
     for row in rows:
-        msg = {
-            "id": row["id"],
-            "sender_name": row["sender_name"],
-            "sender_email": row["sender_email"],
-            "subject": row["subject"],
-            "snippet": row["snippet"],
-            "internal_date_ms": row["internal_date_ms"],
-            "label_ids": json.loads(row["label_ids"] or "[]"),
-            "promo": bool(row["promo"]),
-            "body_text": row["body_text"] or "",
-            "body_truncated": bool(row["body_truncated"]),
-            "category": row["category"],
-        }
-        if row["summary"]:
-            try:
-                msg["summary"] = json.loads(row["summary"])
-            except (json.JSONDecodeError, TypeError):
-                pass
-        out.append(msg)
+        out.append(_message_row_to_dict(row))
     return out
 
 
@@ -535,6 +558,129 @@ def clear_skipped() -> int:
     except Exception as exc:
         logger.warning("store.clear_skipped failed: %s", exc)
     return cleared
+
+
+# --- TODO list ---------------------------------------------------------------
+# Emails parked for later. Manual position order plus an optional due date.
+# TODO rows never expose a Gmail delete action anywhere in the UI.
+
+def _todo_row_to_dict(row) -> dict:
+    try:
+        d = json.loads(row["item"])
+    except (json.JSONDecodeError, TypeError):
+        d = {}
+    d["due_date"] = row["due_date"]
+    d["note"] = row["note"] or ""
+    d["position"] = row["position"]
+    d["added_at"] = row["added_at"]
+    return d
+
+
+def add_todo(item: dict, due_date: str | None = None, note: str = "") -> dict | None:
+    mid = (item or {}).get("id")
+    if not mid:
+        return None
+    now = time.time()
+    with _lock:
+        conn = _get()
+        row = conn.execute("SELECT * FROM todos WHERE id = ?", (mid,)).fetchone()
+        if row:
+            if due_date is not None:
+                conn.execute("UPDATE todos SET due_date = ? WHERE id = ?", (due_date or None, mid))
+            if note:
+                conn.execute("UPDATE todos SET note = ? WHERE id = ?", (note, mid))
+            conn.commit()
+            return _todo_row_to_dict(conn.execute("SELECT * FROM todos WHERE id = ?", (mid,)).fetchone())
+        pos = conn.execute("SELECT COALESCE(MAX(position), 0) + 1 FROM todos").fetchone()[0]
+        conn.execute(
+            "INSERT INTO todos (id, item, due_date, note, position, added_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (mid, json.dumps(item, ensure_ascii=False), due_date or None, note or "", int(pos), now),
+        )
+        conn.commit()
+        return _todo_row_to_dict(conn.execute("SELECT * FROM todos WHERE id = ?", (mid,)).fetchone())
+
+
+def get_todo(message_id: str) -> dict | None:
+    try:
+        with _lock:
+            row = _get().execute("SELECT * FROM todos WHERE id = ?", (message_id,)).fetchone()
+    except Exception as exc:
+        logger.warning("store.get_todo failed: %s", exc)
+        return None
+    return _todo_row_to_dict(row) if row else None
+
+
+def list_todos() -> list[dict]:
+    try:
+        with _lock:
+            rows = _get().execute("SELECT * FROM todos ORDER BY position").fetchall()
+    except Exception as exc:
+        logger.warning("store.list_todos failed: %s", exc)
+        return []
+    return [_todo_row_to_dict(r) for r in rows]
+
+
+def todo_id_set() -> set[str]:
+    try:
+        with _lock:
+            rows = _get().execute("SELECT id FROM todos").fetchall()
+        return {str(r["id"]) for r in rows}
+    except Exception as exc:
+        logger.warning("store.todo_ids failed: %s", exc)
+        return set()
+
+
+def update_todo(message_id: str, *, due_date: str | None = None, due_date_set: bool = False,
+                note: str | None = None) -> dict | None:
+    with _lock:
+        conn = _get()
+        if due_date_set:
+            conn.execute("UPDATE todos SET due_date = ? WHERE id = ?", (due_date or None, message_id))
+        if note is not None:
+            conn.execute("UPDATE todos SET note = ? WHERE id = ?", (note, message_id))
+        conn.commit()
+        row = conn.execute("SELECT * FROM todos WHERE id = ?", (message_id,)).fetchone()
+    return _todo_row_to_dict(row) if row else None
+
+
+def move_todo(message_id: str, direction: int) -> None:
+    rows = list_todos()
+    idx = next((i for i, r in enumerate(rows) if r["id"] == message_id), None)
+    if idx is None:
+        return
+    other = idx + direction
+    if other < 0 or other >= len(rows):
+        return
+    a, b = rows[idx], rows[other]
+    with _lock:
+        conn = _get()
+        conn.execute("UPDATE todos SET position = ? WHERE id = ?", (b["position"], a["id"]))
+        conn.execute("UPDATE todos SET position = ? WHERE id = ?", (a["position"], b["id"]))
+        conn.commit()
+
+
+def reorder_todos(ids: list[str]) -> None:
+    with _lock:
+        conn = _get()
+        rows = conn.execute("SELECT id FROM todos ORDER BY position").fetchall()
+        existing = [str(r["id"]) for r in rows]
+        in_set = set(existing)
+        ordered = [i for i in ids if i in in_set]
+        for rid in existing:
+            if rid not in ordered:
+                ordered.append(rid)
+        for pos, rid in enumerate(ordered, start=1):
+            conn.execute("UPDATE todos SET position = ? WHERE id = ?", (pos, rid))
+        conn.commit()
+
+
+def remove_todo(message_id: str) -> None:
+    try:
+        with _lock:
+            _get().execute("DELETE FROM todos WHERE id = ?", (message_id,))
+            _get().commit()
+    except Exception as exc:
+        logger.warning("store.remove_todo failed: %s", exc)
 
 
 # --- Promo-blocked senders -----------------------------------------------------

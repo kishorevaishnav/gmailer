@@ -142,6 +142,17 @@ class GmailClient:
             body["removeLabelIds"] = remove
         self._request("POST", f"/messages/{message_id}/modify", json=body)
 
+    def list_labels(self) -> list[dict]:
+        return self._request("GET", "/labels").get("labels", [])
+
+    def create_label(self, name: str) -> dict:
+        return self._request("POST", "/labels", json={
+            "name": name,
+            "labelListVisibility": "labelShow",
+            "messageListVisibility": "show",
+            "color": {"backgroundColor": "#fad165", "textColor": "#000000"},
+        })
+
 
 # --- Service / profile -------------------------------------------------------
 
@@ -389,6 +400,24 @@ def star(client: GmailClient, message_id: str) -> None:
 
 def unstar(client: GmailClient, message_id: str) -> None:
     _call(lambda: client.modify(message_id, remove=["STARRED"]))
+
+
+TODO_LABEL_NAME = "TODO"
+
+
+def ensure_todo_label(client: GmailClient) -> str:
+    found = next((l for l in client.list_labels() if (l.get("name") or "").upper() == TODO_LABEL_NAME), None)
+    if found:
+        return found["id"]
+    return client.create_label(TODO_LABEL_NAME)["id"]
+
+
+def apply_todo_label(client: GmailClient, message_id: str) -> None:
+    _call(lambda: client.modify(message_id, add=[ensure_todo_label(client)]))
+
+
+def remove_todo_label(client: GmailClient, message_id: str) -> None:
+    _call(lambda: client.modify(message_id, remove=[ensure_todo_label(client)]))
 
 
 def bulk_execute(client: GmailClient, message_ids: list[str], fn) -> list[str]:

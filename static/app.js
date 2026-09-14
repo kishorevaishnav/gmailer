@@ -21,6 +21,9 @@ const state = {
   cacheCount: 0,
   skippedIds: new Set(),  // ids hidden "for now" (persisted server-side)
   skippedItems: [],       // metadata for those hidden emails
+  todoIds: new Set(),     // ids parked on the TODO page (never deletable)
+  searchQuery: "",        // active search text ("" = no search)
+  searchResults: null,    // null = group view; array = search results view
   nextPageToken: null,    // Gmail pagination token for "load next batch"
   activeGroupKey: null,    // "singles" | bundle_key | null
   expandedCardId: null,    // currently inline-expanded email id
@@ -59,7 +62,7 @@ const el = {
   userChip: $("userChip"), logoutBtn: $("logoutBtn"),
   themeBtn: $("themeBtn"), themeIconMoon: $("themeIconMoon"), themeIconSun: $("themeIconSun"), themeIconApple: $("themeIconApple"),
   position: $("position"), positionTotal: $("positionTotal"),
-  undoTopBtn: $("undoTopBtn"), reloadBtn: $("reloadBtn"), clearCacheBtn: $("clearCacheBtn"),
+  undoTopBtn: $("undoTopBtn"), reloadBtn: $("reloadBtn"), clearCacheBtn: $("clearCacheBtn"), todoCount: $("todoCount"), searchInput: $("searchInput"),
   toasts: $("toasts"),
   emptyScreen: $("emptyScreen"), emptyStat: $("emptyStat"), emptyReload: $("emptyReload"),
   groupHeader: $("groupHeader"), groupTitle: $("groupTitle"), groupCount: $("groupCount"), groupOverview: $("groupOverview"), bulkDeleteBtn: $("bulkDeleteBtn"), bulkArchiveBtn: $("bulkArchiveBtn"), emailCards: $("emailCards"), categoryChips: $("categoryChips"), categoryInput: $("categoryInput"), categoryAddBtn: $("categoryAddBtn"), categoriesCount: $("categoriesCount"),
@@ -247,18 +250,23 @@ async function init() {
 }
 
 async function loadQueue() {
+  state.searchQuery = "";
+  state.searchResults = null;
+  if (el.searchInput) el.searchInput.value = "";
   await showLoading("Pulling latest unread inbox…");
   try {
-    const [data, skippedRes, rulesRes, proposalsRes, wikiRes] = await Promise.all([
+    const [data, skippedRes, rulesRes, proposalsRes, wikiRes, todosRes] = await Promise.all([
       api(`/api/queue?max_results=${BATCH}`),
       api("/api/skipped").catch(() => ({ items: [] })),
       api("/api/rules").catch(() => ({ items: [] })),
       api("/api/proposals").catch(() => ({ items: [] })),
       api("/api/wiki/observations").catch(() => ({ items: [] })),
+      api("/api/todos").catch(() => ({ items: [] })),
     ]);
     const skipped = skippedRes.items || [];
     state.skippedIds = new Set(skipped.map((i) => i.id));
     state.skippedItems = skipped;
+    state.todoIds = new Set((todosRes.items || []).map((i) => i.id));
     const keep = [];
     (data.items || []).forEach((it) => {
       if (state.skippedIds.has(it.id)) state.skippedItems.push(it);
@@ -293,6 +301,9 @@ async function loadQueue() {
 async function loadMore() {
   if (state.busy) return;
   if (!state.nextPageToken) { toast("No more unread emails in the inbox", "info", { duration: 1800 }); return; }
+  state.searchQuery = "";
+  state.searchResults = null;
+  if (el.searchInput) el.searchInput.value = "";
   state.busy = true;
   await showLoading("Pulling the next batch…");
   try {
@@ -353,7 +364,10 @@ function pumpDetail(d) {
     if (d.preview) it.preview = d.preview;
   }
   const visibleIds = new Set((state.visibleEmails || []).map((x) => x.id));
-  if (state.expandedCardId === d.id || visibleIds.has(d.id)) renderGroupView();
+  if (state.expandedCardId === d.id || visibleIds.has(d.id)) {
+    if (state.searchResults) renderSearchView();
+    else renderGroupView();
+  }
 }
 
 /* Summarize ungrouped ("singles") emails in the background so their
@@ -413,7 +427,10 @@ function renderSidebar() {
 
   const _keys = groupKeys();
   const _idx = _keys.indexOf(state.activeGroupKey);
-  if (state.activeGroupKey === null) {
+  if (state.searchResults) {
+    el.position.textContent = "Search";
+    el.positionTotal.textContent = `${state.searchResults.length} matches`;
+  } else if (state.activeGroupKey === null) {
     el.position.textContent = "No group selected";
     el.positionTotal.textContent = `${state.queue.length} in batch`;
   } else if (_idx === -1) {
@@ -437,6 +454,8 @@ function renderSidebar() {
   }
 
   el.loadMoreBtn.classList.toggle("hidden", !state.nextPageToken);
+
+  if (el.todoCount) el.todoCount.textContent = state.todoIds.size ? `(${state.todoIds.size})` : "";
 
   renderPendingOps();
   renderGroups();
@@ -744,7 +763,7 @@ function groupRow(g) {
 async function fetchGroup(key, g) {
   if (state.groupCache.has(key) || state.groupFetching.has(key)) return;
   state.groupFetching.add(key);
-  renderGroupView();
+  if (!state.searchResults) renderGroupView();
   try {
     const res = await api(`/api/groups/${encodeURIComponent(key)}/summarize`, {
       method: "POST",
@@ -757,7 +776,7 @@ async function fetchGroup(key, g) {
   } finally {
     state.groupFetching.delete(key);
   }
-  renderGroupView();
+  if (!state.searchResults) renderGroupView();
 }
 
 function mergeGroupSummaries(res) {
@@ -784,8 +803,76 @@ function mergeGroupSummaries(res) {
 function selectGroup(key) {
   state.activeGroupKey = key;
   state.expandedCardId = null;
+  state.searchQuery = "";
+  state.searchResults = null;
+  if (el.searchInput) el.searchInput.value = "";
   renderSidebar();
   renderGroupView();
+}
+
+/* ───────────────────────────── Search ──────────────────────────── */
+let searchTimer = null;
+
+function queueMatches(it, q) {
+  const sum = it.summary || {};
+  const hay = [
+    it.subject, it.sender_name, it.sender_email, it.snippet, it.preview,
+    sum.one_liner, (sum.bullets || []).join(" "), it.category,
+  ].filter(Boolean).join("\n").toLowerCase();
+  return hay.includes(q);
+}
+
+async function runSearch(raw) {
+  const q = (raw || "").trim();
+  state.searchQuery = q;
+  state.expandedCardId = null;
+  if (q.length < 2) {
+    state.searchResults = null;
+    renderSidebar();
+    renderGroupView();
+    return;
+  }
+  try {
+    const data = await api(`/api/search?q=${encodeURIComponent(q)}&limit=100`);
+    if (state.searchQuery !== q) return;
+    const seen = new Map();
+    for (const it of (data.items || [])) seen.set(it.id, it);
+    const ql = q.toLowerCase();
+    for (const it of state.queue) {
+      if (!seen.has(it.id) && queueMatches(it, ql)) seen.set(it.id, it);
+    }
+    state.searchResults = [...seen.values()]
+      .sort((a, b) => (b.internal_date_ms || 0) - (a.internal_date_ms || 0));
+    state.visibleEmails = state.searchResults;
+    renderSidebar();
+    renderSearchView();
+  } catch (e) {
+    toast(`Search failed: ${e.message}`, "err", { duration: 3000 });
+  }
+}
+
+function exitSearch() {
+  if (!state.searchResults && !state.searchQuery) return;
+  state.searchQuery = "";
+  state.searchResults = null;
+  if (el.searchInput) el.searchInput.value = "";
+  renderSidebar();
+  renderGroupView();
+}
+
+function renderSearchView() {
+  const q = state.searchQuery;
+  const results = state.searchResults || [];
+  state.visibleEmails = results;
+  el.groupHeader.classList.remove("hidden");
+  el.groupTitle.textContent = `Search: “${q}”`;
+  el.groupCount.textContent = `${results.length} match${results.length === 1 ? "" : "es"}`;
+  el.groupOverview.textContent = "Local cache (subject · sender · body) + current batch. Esc clears.";
+  el.bulkDeleteBtn.classList.add("hidden");
+  el.bulkArchiveBtn.classList.add("hidden");
+  el.emailCards.innerHTML = results.length
+    ? results.map(emailCard).join("")
+    : `<p class="text-sm text-slate-500 dark:text-slate-600 p-6">No matches for “${esc(q)}”.</p>`;
 }
 
 /* ───────────────────────────── Group view (middle pane) ──────────── */
@@ -863,6 +950,10 @@ function emailCard(it) {
     ? `<span class="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[9px] font-bold text-violet-700 dark:text-violet-300">${esc(cat)}</span>` : "";
   const promoBadge = it.promo
     ? `<span class="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:text-amber-300">PROMO</span>` : "";
+  const isTodo = state.todoIds.has(it.id);
+  const todoBadge = isTodo
+    ? `<span class="shrink-0 rounded bg-sky-500/15 px-1.5 py-0.5 text-[9px] font-bold text-sky-700 dark:text-sky-300">TODO</span>` : "";
+  const inQueue = state.queue.some((x) => x.id === it.id);
 
   let summaryHTML;
   if (sum.one_liner) {
@@ -887,17 +978,19 @@ function emailCard(it) {
 
   const btns = `
     <button data-cardact="archive" data-id="${esc(it.id)}" class="rounded bg-emerald-500/15 px-2 py-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/30 transition">Archive</button>
-    <button data-cardact="trash" data-id="${esc(it.id)}" class="rounded bg-red-500/15 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition">Delete</button>
+    ${isTodo ? "" : `<button data-cardact="trash" data-id="${esc(it.id)}" class="rounded bg-red-500/15 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition">Delete</button>`}
     <button data-cardact="star" data-id="${esc(it.id)}" class="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition">Star</button>
     <button data-cardact="skip" data-id="${esc(it.id)}" class="rounded bg-slate-500/15 px-2 py-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-500/30 transition">Skip</button>
-    <button data-cardact="keep" data-id="${esc(it.id)}" class="rounded bg-slate-500/15 px-2 py-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-500/30 transition">Keep</button>
+    <button data-cardact="todo" data-id="${esc(it.id)}" class="rounded bg-sky-500/15 px-2 py-1 text-[10px] font-bold text-sky-700 dark:text-sky-300 hover:bg-sky-500/30 transition">${isTodo ? "✓ Todo" : "Todo"}</button>
+    ${inQueue ? `<button data-cardact="keep" data-id="${esc(it.id)}" class="rounded bg-slate-500/15 px-2 py-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-500/30 transition">Keep</button>` : ""}
+    <a href="https://mail.google.com/mail/u/0/#inbox/${esc(it.id)}" target="_blank" rel="noopener noreferrer" class="rounded bg-slate-500/15 px-2 py-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-500/30 transition" title="Open in Gmail">Gmail ↗</a>
     <button data-cardact="ruleBlock" data-id="${esc(it.id)}" class="rounded bg-red-500/15 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition">Block</button>
     ${it.promo ? `<button data-cardact="rulePromoBlock" data-id="${esc(it.id)}" class="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition">Auto-del promos</button>` : ""}`;
 
   return `
     <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-3 transition group-card ${politics ? "opacity-60" : ""}" data-expand="${esc(it.id)}" data-expanded="${expanded}">
       <div class="flex items-center gap-2 flex-wrap cursor-pointer" data-expand="${esc(it.id)}">
-        ${categoryChip} ${promoBadge}
+        ${categoryChip} ${promoBadge} ${todoBadge}
         <p class="min-w-0 flex-1 text-sm font-bold text-slate-800 dark:text-slate-200 truncate">${esc(it.subject || "(no subject)")}</p>
       </div>
       ${summaryHTML}
@@ -946,19 +1039,59 @@ function detailHTML(it) {
     </div>`;
 }
 
-function currentItemOf(id) { return state.queue.find((i) => i.id === id); }
+function currentItemOf(id) {
+  return state.queue.find((i) => i.id === id)
+    || (state.searchResults || []).find((i) => i.id === id);
+}
+
+function refreshMainView() {
+  renderSidebar();
+  if (state.searchResults) renderSearchView();
+  else if (state.queue.length === 0) showEmpty();
+  else renderGroupView();
+}
 
 /* ───────────────────────────── Actions ─────────────────────────── */
+async function toggleTodo(id) {
+  const item = currentItemOf(id);
+  if (!item) { toast("That email is no longer in the queue", "err", { duration: 2000 }); return; }
+  try {
+    if (state.todoIds.has(id)) {
+      await api("/api/todos/remove", { method: "POST", body: JSON.stringify({ id }) });
+      state.todoIds.delete(id);
+      toast("Removed from TODO", "info", { duration: 1800 });
+    } else {
+      await api("/api/todos/add", { method: "POST", body: JSON.stringify({ item }) });
+      state.todoIds.add(id);
+      toast("Labeled TODO in Gmail + parked on the TODO page", "ok", { duration: 2600 });
+    }
+    renderSidebar();
+    renderGroupView();
+  } catch (e) {
+    toast(`Todo failed: ${e.message}`, "err", { duration: 3000 });
+  }
+}
+
 async function actOn(action, id) {
   if (state.busy) return;
-  const item = state.queue.find((i) => i.id === id);
+  if (action === "trash" && state.todoIds.has(id)) {
+    toast("TODO items can't be deleted — remove from TODO first", "err", { duration: 2600 });
+    return;
+  }
+  const item = currentItemOf(id);
   if (!item) return;
+  const wasInQueue = state.queue.some((i) => i.id === id);
   state.busy = true;
   try {
     await api(`/api/messages/${id}/${action}`, { method: "POST", body: "{}" });
-    pushHistory(action, [id], [item]);
-    removeFromQueue(id);
-    toast(`${actionLabel(action)} · synced to Gmail`, action === "star" ? "info" : "ok", { undo: true });
+    if (wasInQueue) {
+      pushHistory(action, [id], [item]);
+      removeFromQueue(id);
+      toast(`${actionLabel(action)} · synced to Gmail`, action === "star" ? "info" : "ok", { undo: true });
+    } else {
+      dropFromView(id);
+      toast(`${actionLabel(action)} · synced to Gmail`, action === "star" ? "info" : "ok");
+    }
   } catch (e) {
     toast(`Action failed: ${e.message}`, "err", { duration: 4000 });
   } finally {
@@ -1038,8 +1171,7 @@ function queueBulk(action, groupKey) {
       op.status = "failed";
       renderPendingOps();
       restoreToQueue(affected);
-      renderSidebar();
-      renderGroupView();
+      refreshMainView();
       toast(`Bulk ${action === "trash" ? "delete" : "archive"} failed — emails restored`, "err", { duration: 4000 });
       scheduleOpRemoval(op);
     });
@@ -1049,16 +1181,28 @@ function actionLabel(action) {
   return { trash: "Trashed", archive: "Archived", star: "Starred" }[action] || action;
 }
 
+function dropFromView(id) {
+  state.detail.delete(id);
+  if (state.searchResults) {
+    state.searchResults = state.searchResults.filter((i) => i.id !== id);
+    state.visibleEmails = state.visibleEmails.filter((i) => i.id !== id);
+  }
+}
+
 function removeFromQueue(id) {
   state.detail.delete(id);
   const idx = state.queue.findIndex((i) => i.id === id);
-  if (idx === -1) return;
+  if (idx === -1) {
+    dropFromView(id);
+    refreshMainView();
+    return;
+  }
   state.queue.splice(idx, 1);
   invalidateGroups();
+  if (idx < state.index) state.index -= 1;
   if (state.index >= state.queue.length) state.index = Math.max(0, state.queue.length - 1);
-  renderSidebar();
-  if (state.queue.length === 0) { showEmpty(); return; }
-  renderGroupView();
+  dropFromView(id);
+  refreshMainView();
 }
 
 function invalidateGroups() {
@@ -1081,14 +1225,15 @@ async function removeAndSkip(item) {
     await api("/api/skipped/add", { method: "POST", body: JSON.stringify({ item }) });
     state.skippedIds.add(item.id);
     state.skippedItems.push(item);
-    state.detail.delete(item.id);
     const idx = state.queue.findIndex((i) => i.id === item.id);
-    if (idx !== -1) state.queue.splice(idx, 1);
-    invalidateGroups();
-    if (state.index >= state.queue.length) state.index = Math.max(0, state.queue.length - 1);
-    renderSidebar();
-    if (state.queue.length === 0) { showEmpty(); return; }
-    renderGroupView();
+    if (idx !== -1) {
+      state.queue.splice(idx, 1);
+      invalidateGroups();
+      if (idx < state.index) state.index -= 1;
+      if (state.index >= state.queue.length) state.index = Math.max(0, state.queue.length - 1);
+    }
+    dropFromView(item.id);
+    refreshMainView();
     toast("Skipped for now — hidden until you bring it back", "info", {
       undo: true, undoFn: () => restoreSkipped(item.id), duration: 3600,
     });
@@ -1114,9 +1259,12 @@ async function restoreSkipped(id) {
   state.queue.splice(state.index, 0, item);
   state.originalTotal = Math.max(state.originalTotal, state.queue.length + state.skippedItems.length);
   invalidateGroups();
-  renderSidebar();
-  if (state.queue.length === 0) { showEmpty(); return; }
-  renderGroupView();
+  if (state.searchResults) exitSearch();
+  else {
+    renderSidebar();
+    if (state.queue.length === 0) { showEmpty(); return; }
+    renderGroupView();
+  }
   toast("Back in the batch", "ok", { duration: 1800 });
 }
 
@@ -1131,9 +1279,12 @@ async function restoreAllSkipped() {
   if (items.length) state.queue.splice(state.index, 0, ...items);
   state.originalTotal = Math.max(state.originalTotal, state.queue.length);
   invalidateGroups();
-  renderSidebar();
-  if (state.queue.length === 0) { showEmpty(); return; }
-  renderGroupView();
+  if (state.searchResults) exitSearch();
+  else {
+    renderSidebar();
+    if (state.queue.length === 0) { showEmpty(); return; }
+    renderGroupView();
+  }
   toast(`Brought back ${items.length} skipped email${items.length === 1 ? "" : "s"}`, "ok", { duration: 2200 });
 }
 
@@ -1411,8 +1562,7 @@ async function undoEntry(h, i) {
     restoredItems.forEach((item) => state.detail.delete(item.id));
     state.queue.splice(state.index, 0, ...restoredItems);
     invalidateGroups();
-    renderSidebar();
-    renderGroupView();
+    refreshMainView();
     toast(`Restored ${restoredItems.length} email${restoredItems.length === 1 ? "" : "s"} · synced to Gmail`, "ok");
   } catch (e) {
     toast(`Undo failed: ${e.message}`, "err", { duration: 4000 });
@@ -1478,6 +1628,8 @@ window.addEventListener("keydown", (e) => {
       e.preventDefault(); stepGroup(-1); break;
     case "x":
       e.preventDefault(); skipForNow(currentTargetId()); break;
+    case "t":
+      e.preventDefault(); toggleTodo(currentTargetId()); break;
     case "b":
       e.preventDefault(); issueBlock(); break;
     case "p":
@@ -1488,7 +1640,12 @@ window.addEventListener("keydown", (e) => {
       e.preventDefault();
       toast("Reply composer ships in Phase 2", "info", { duration: 1600 });
       break;
+    case "/":
+      e.preventDefault();
+      if (el.searchInput) el.searchInput.focus();
+      break;
     case "escape":
+      exitSearch();
       clearToasts();
       break;
   }
@@ -1535,6 +1692,16 @@ el.groupList.addEventListener("click", (e) => {
   if (t) selectGroup(t.dataset.group);
 });
 
+if (el.searchInput) {
+  el.searchInput.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => runSearch(el.searchInput.value), 300);
+  });
+  el.searchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); clearTimeout(searchTimer); runSearch(el.searchInput.value); }
+    else if (e.key === "Escape") { e.preventDefault(); el.searchInput.blur(); exitSearch(); }
+  });
+}
 el.categoryAddBtn.addEventListener("click", addCategory);
 el.categoryInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); addCategory(); }
@@ -1552,7 +1719,7 @@ el.categoryChips.addEventListener("click", (e) => {
 
 el.emailCards.addEventListener("click", (e) => {
   const t = e.target.closest("[data-expand]");
-  if (!t || e.target.closest("button")) return;
+  if (!t || e.target.closest("button,a")) return;
   const id = t.dataset.expand;
   state.expandedCardId = state.expandedCardId === id ? null : id;
   renderGroupView();
@@ -1564,6 +1731,7 @@ document.addEventListener("click", (e) => {
   const id = b.dataset.id;
   const act = b.dataset.cardact;
   if (act === "skip") skipForNowById(id);
+  else if (act === "todo") toggleTodo(id);
   else if (act === "ruleBlock") issueRuleBlock(id);
   else if (act === "rulePromoBlock") issueRulePromoBlock(id);
   else if (act === "keep") keepEmail(id);

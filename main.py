@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException
@@ -190,6 +191,17 @@ def api_messages(limit: int = 500, offset: int = 0):
     return {"items": items, "count": len(items), "total": store.cache_count()}
 
 
+# --- Search (local cache: subject / sender / snippet / body) ------------------
+
+@app.get("/api/search")
+def api_search(q: str = "", limit: int = 100):
+    q = (q or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="q required")
+    items = store.search_messages(q, limit=limit)
+    return {"items": items, "count": len(items), "query": q}
+
+
 # --- Skipped-for-now ---------------------------------------------------------
 
 class SkipAddRequest(BaseModel):
@@ -228,6 +240,118 @@ def api_skipped_remove(req: SkipRemoveRequest):
 def api_skipped_clear():
     cleared = store.clear_skipped()
     return {"ok": True, "cleared": cleared}
+
+
+# --- TODO list -----------------------------------------------------------------
+
+class TodoAddRequest(BaseModel):
+    item: dict
+    due_date: str | None = None
+    note: str | None = None
+
+
+class TodoRemoveRequest(BaseModel):
+    id: str
+
+
+class TodoPatchRequest(BaseModel):
+    due_date: str | None = None
+    note: str | None = None
+
+
+class TodoMoveRequest(BaseModel):
+    direction: str
+
+
+class TodoReorderRequest(BaseModel):
+    ids: list[str]
+
+
+def _check_due_date(due_date: str | None) -> str | None:
+    if due_date is None or due_date == "":
+        return None
+    import datetime as _dt
+    try:
+        _dt.date.fromisoformat(due_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="due_date must be YYYY-MM-DD")
+    return due_date
+
+
+@app.get("/api/todos")
+def api_todos():
+    return {"items": store.list_todos()}
+
+
+@app.post("/api/todos/add")
+def api_todos_add(req: TodoAddRequest):
+    if not (req.item or {}).get("id"):
+        raise HTTPException(status_code=400, detail="item.id required")
+    service = require_service()
+    _run(gmail_service.apply_todo_label, service, req.item["id"])
+    row = store.add_todo(req.item, _check_due_date(req.due_date), req.note or "")
+    itm = req.item or {}
+    store.add_trace(
+        message_id=itm.get("id"), action="todo_added", rule_id=None,
+        sender_email=itm.get("sender_email"), sender_name=itm.get("sender_name"),
+        subject=itm.get("subject"), promo=bool(itm.get("promo")), category=itm.get("category"),
+    )
+    return row
+
+
+def _drop_gmail_todo_label(service, message_id: str) -> None:
+    try:
+        gmail_service.remove_todo_label(service, message_id)
+    except Exception:
+        logger.warning("TODO Gmail label removal failed for %s", message_id)
+
+
+@app.post("/api/todos/remove")
+def api_todos_remove(req: TodoRemoveRequest):
+    service = require_service()
+    _drop_gmail_todo_label(service, req.id)
+    store.remove_todo(req.id)
+    return {"ok": True}
+
+
+@app.post("/api/todos/done")
+def api_todos_done(req: TodoRemoveRequest):
+    service = require_service()
+    _drop_gmail_todo_label(service, req.id)
+    row = store.get_todo(req.id)
+    if row:
+        store.add_trace(
+            message_id=row.get("id"), action="todo_done", rule_id=None,
+            sender_email=row.get("sender_email"), sender_name=row.get("sender_name"),
+            subject=row.get("subject"), promo=bool(row.get("promo")), category=row.get("category"),
+        )
+    store.remove_todo(req.id)
+    return {"ok": True}
+
+
+@app.patch("/api/todos/{todo_id}")
+def api_todo_update(todo_id: str, req: TodoPatchRequest):
+    if store.get_todo(todo_id) is None:
+        raise HTTPException(status_code=404, detail="todo not found")
+    data = req.model_dump(exclude_unset=True)
+    due = _check_due_date(data["due_date"]) if "due_date" in data else None
+    row = store.update_todo(todo_id, due_date=due, due_date_set="due_date" in data,
+                             note=data.get("note"))
+    return row
+
+
+@app.post("/api/todos/{todo_id}/move")
+def api_todo_move(todo_id: str, req: TodoMoveRequest):
+    if store.get_todo(todo_id) is None:
+        raise HTTPException(status_code=404, detail="todo not found")
+    store.move_todo(todo_id, 1 if req.direction == "down" else -1)
+    return {"ok": True}
+
+
+@app.post("/api/todos/reorder")
+def api_todos_reorder(req: TodoReorderRequest):
+    store.reorder_todos([str(i) for i in req.ids])
+    return {"ok": True}
 
 
 # --- Rules (auto-delete / auto-star engine) -------------------------------------
@@ -698,6 +822,15 @@ app.mount("/static", StaticFiles(directory=str(config.STATIC_DIR)), name="static
 
 
 @app.middleware("http")
+async def collapse_duplicate_slashes(request, call_next):
+    path = request.url.path
+    if "//" in path:
+        clean = re.sub(r"/{2,}", "/", path)
+        return RedirectResponse(str(request.url.replace(path=clean)), status_code=307)
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def no_cache_static(request, call_next):
     """Bust stale browser caches for dev assets: always revalidate /static."""
     response = await call_next(request)
@@ -719,3 +852,8 @@ def email_viewer():
 @app.get("/rules", include_in_schema=False)
 def rules_page():
     return FileResponse(config.STATIC_DIR / "rules.html")
+
+
+@app.get("/todos", include_in_schema=False)
+def todos_page():
+    return FileResponse(config.STATIC_DIR / "todos.html")
