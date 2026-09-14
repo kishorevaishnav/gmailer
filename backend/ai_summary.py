@@ -118,6 +118,9 @@ def sender_mapped_category(msg: dict, categories: list[str]) -> str | None:
             hit = (bool(email) and pat in email) or (bool(name) and pat in name)
         if not hit:
             continue
+        conds = [c.strip() for c in (m.get("subject_contains") or "").lower().split(",") if c.strip()]
+        if conds and not any(c in (msg.get("subject") or "").lower() for c in conds):
+            continue
         target = _find_category(categories, m.get("category") or "")
         if not target:
             continue

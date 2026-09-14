@@ -133,6 +133,8 @@ def api_queue(max_results: int = config.DEFAULT_BATCH, page_token: str | None = 
                 item["body_cached"] = True
             if cached.get("category"):
                 item["category"] = cached["category"]
+            if cached.get("category_locked"):
+                item["category_locked"] = True
     return {
         "total": len(items),
         "items": items,
@@ -699,6 +701,7 @@ class SenderMapAddRequest(BaseModel):
     pattern: str
     category: str
     promo_sensitive: bool = True
+    subject_contains: str = ""
 
 
 class SenderMapRemoveRequest(BaseModel):
@@ -713,7 +716,8 @@ def api_sender_map():
 @app.post("/api/sender-map")
 def api_sender_map_add(req: SenderMapAddRequest):
     try:
-        items = store.add_sender_map(req.pattern, req.category, req.promo_sensitive)
+        items = store.add_sender_map(req.pattern, req.category, req.promo_sensitive,
+                                     req.subject_contains)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"items": items}
@@ -752,6 +756,7 @@ def api_categories_remap(req: CategoryRemapRequest):
 class CategorySetRequest(BaseModel):
     id: str
     category: str
+    subject_contains: str = ""
 
 
 @app.post("/api/categories/set")
@@ -766,6 +771,16 @@ def api_categories_set(req: CategorySetRequest):
     row = store.set_message_category(mid, canonical, locked=True)
     if row is None:
         raise HTTPException(status_code=404, detail="message not cached")
+    mapping = None
+    sender_email = (row.get("sender_email") or "").strip().lower()
+    if sender_email:
+        try:
+            cond = (req.subject_contains or "").strip().lower()
+            store.add_sender_map(sender_email, canonical, False, cond)
+            mapping = {"pattern": sender_email, "category": canonical, "subject_contains": cond}
+        except Exception:
+            logger.warning("sender-map learn failed for %s", sender_email)
+    row["learned_mapping"] = mapping
     return row
 
 

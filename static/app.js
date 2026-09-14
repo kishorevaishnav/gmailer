@@ -67,7 +67,7 @@ const el = {
   position: $("position"), positionTotal: $("positionTotal"),
   undoTopBtn: $("undoTopBtn"), reloadBtn: $("reloadBtn"), clearCacheBtn: $("clearCacheBtn"), todoCount: $("todoCount"), searchInput: $("searchInput"),
   todoModal: $("todoModal"), todoModalSub: $("todoModalSub"), todoDueInput: $("todoDueInput"), todoModalCancel: $("todoModalCancel"), todoModalSave: $("todoModalSave"),
-  recatModal: $("recatModal"), recatModalSub: $("recatModalSub"), recatSelect: $("recatSelect"), recatModalCancel: $("recatModalCancel"), recatModalAuto: $("recatModalAuto"), recatModalSave: $("recatModalSave"),
+  recatModal: $("recatModal"), recatModalSub: $("recatModalSub"), recatSelect: $("recatSelect"), recatReason: $("recatReason"), recatModalCancel: $("recatModalCancel"), recatModalAuto: $("recatModalAuto"), recatModalSave: $("recatModalSave"),
   toasts: $("toasts"),
   emptyScreen: $("emptyScreen"), emptyStat: $("emptyStat"), emptyReload: $("emptyReload"),
   groupHeader: $("groupHeader"), groupTitle: $("groupTitle"), groupCount: $("groupCount"), groupOverview: $("groupOverview"), bulkDeleteBtn: $("bulkDeleteBtn"), bulkArchiveBtn: $("bulkArchiveBtn"), emailCards: $("emailCards"), remapCatsBtn: $("remapCatsBtn"),
@@ -557,6 +557,7 @@ async function remapOne(id) {
     const res = await api("/api/categories/remap-one", { method: "POST", body: JSON.stringify({ id }) });
     if (res.changed) toast(`${res.old || "?"} → ${res.category}`, "ok", { duration: 2200 });
     else toast(`Already ${res.category || "categorized"} — no change`, "info", { duration: 1800 });
+    applyCategoryLocally(id, res.category, false);
     refreshMainView();
   } catch (e) {
     toast(`Re-evaluate failed: ${e.message}`, "err", { duration: 3000 });
@@ -577,6 +578,7 @@ async function openRecatModal(id) {
   const current = emailCategory(item);
   state.pendingRecatId = id;
   el.recatModalSub.textContent = item.subject || "(no subject)";
+  el.recatReason.value = "";
   el.recatSelect.innerHTML = state.recatCats.map((c) =>
     `<option value="${esc(c)}"${c === current ? " selected" : ""}>${esc(c)}${c === current ? " (current)" : ""}</option>`).join("");
   el.recatModal.classList.remove("hidden");
@@ -590,15 +592,37 @@ function closeRecatModal() {
   el.recatModal.classList.remove("flex");
 }
 
+function applyCategoryLocally(id, category, locked = false) {
+  for (const list of [state.queue, state.searchResults || []]) {
+    const it = (list || []).find((x) => x && x.id === id);
+    if (it) {
+      it.category = category;
+      it.category_locked = locked;
+      if (it.summary) it.summary.category = category;
+    }
+  }
+  const d = state.detail.get(id);
+  if (d) {
+    d.category = category;
+    d.category_locked = locked;
+    if (d.summary) d.summary.category = category;
+  }
+}
+
 async function confirmRecatModal() {
   const id = state.pendingRecatId;
   if (!id) { closeRecatModal(); return; }
   try {
     const row = await api("/api/categories/set", {
-      method: "POST", body: JSON.stringify({ id, category: el.recatSelect.value }),
+      method: "POST",
+      body: JSON.stringify({ id, category: el.recatSelect.value, subject_contains: el.recatReason.value }),
     });
     closeRecatModal();
-    toast(`Set to ${row.category} (locked from bulk Remap)`, "ok", { duration: 2400 });
+    applyCategoryLocally(id, row.category, true);
+    const lm = row.learned_mapping;
+    const learned = lm
+      ? ` · future mail from ${lm.pattern}${lm.subject_contains ? ` with “${lm.subject_contains}”` : ""} auto-maps here` : "";
+    toast(`Set to ${row.category} (locked)${learned}`, "ok", { duration: 3200 });
     refreshMainView();
   } catch (e) {
     toast(`Set failed: ${e.message}`, "err", { duration: 3000 });
@@ -913,7 +937,7 @@ function emailCard(it) {
   const politics = !!(it.is_politics || sum.is_politics);
 
   const categoryChip = cat
-    ? `<span class="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[9px] font-bold text-violet-700 dark:text-violet-300">${esc(cat)}</span>` : "";
+    ? `<span class="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[9px] font-bold text-violet-700 dark:text-violet-300" ${it.category_locked ? `title="Manually set — bulk Remap skips it"` : ""}>${it.category_locked ? "🔒 " : ""}${esc(cat)}</span>` : "";
   const promoBadge = it.promo
     ? `<span class="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:text-amber-300">PROMO</span>` : "";
   const isTodo = state.todoIds.has(it.id);

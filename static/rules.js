@@ -16,7 +16,7 @@ const el = {
   fAbout: $("fAbout"), buildMdBtn: $("buildMdBtn"),
   refreshBtn: $("refreshBtn"), newRuleBtn: $("newRuleBtn"), toasts: $("toasts"),
   senderMapList: $("senderMapList"), smPattern: $("smPattern"), smCategory: $("smCategory"),
-  smPromo: $("smPromo"), smAdd: $("smAdd"),
+  smPromo: $("smPromo"), smSubject: $("smSubject"), smAdd: $("smAdd"),
 };
 
 const state = { rules: [], proposals: [], wiki: [], senders: [], categories: [], editingId: null, tab: "rules" };
@@ -168,6 +168,7 @@ function renderAll() {
     <span class="font-mono text-xs truncate flex-1">${esc(m.pattern)}</span>
     <span class="text-[10px] text-slate-400">→</span>
     <span class="rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">${esc(m.category)}</span>
+    ${m.subject_contains ? `<span class="rounded bg-sky-500/15 px-1.5 py-0.5 text-[9px] font-bold text-sky-700 dark:text-sky-300" title="Only applies when the subject contains this">subj: ${esc(m.subject_contains)}</span>` : ""}
     ${m.promo_sensitive ? `<span class="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:text-amber-300" title="Promo-looking mail detours to Promos">PROMO↗</span>` : ""}
     <button data-smact="del" data-pattern="${esc(m.pattern)}" class="rounded bg-red-500/15 px-2 py-0.5 text-[10px] font-bold text-red-700 dark:text-red-300" title="Delete mapping">×</button>
   </li>`).join("") : `<li class="text-xs text-slate-500">No sender mappings yet.</li>`;
@@ -332,10 +333,11 @@ el.smAdd.addEventListener("click", async () => {
   try {
     const res = await api("/api/sender-map", {
       method: "POST",
-      body: JSON.stringify({ pattern, category, promo_sensitive: el.smPromo.checked }),
+      body: JSON.stringify({ pattern, category, promo_sensitive: el.smPromo.checked, subject_contains: el.smSubject.value }),
     });
     state.senders = res.items || [];
     el.smPattern.value = "";
+    el.smSubject.value = "";
     renderAll();
     toast(`“${pattern}” → ${category}`, "ok");
   } catch (err) { toast(`Add failed: ${err.message}`, "err"); }

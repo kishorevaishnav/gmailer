@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS sender_map (
     pattern         TEXT PRIMARY KEY,
     category        TEXT NOT NULL,
     promo_sensitive INTEGER DEFAULT 1,
-    created_at      REAL
+    created_at      REAL,
+    subject_contains TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS skipped (
@@ -216,6 +217,10 @@ def _get() -> sqlite3.Connection:
             pass
         try:
             _conn.execute("ALTER TABLE messages ADD COLUMN category_locked INTEGER DEFAULT 0")
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError):
+            pass
+        try:
+            _conn.execute("ALTER TABLE sender_map ADD COLUMN subject_contains TEXT DEFAULT ''")
         except (sqlite3.OperationalError, sqlite3.ProgrammingError):
             pass
         try:
@@ -625,29 +630,42 @@ def get_sender_map() -> list[dict]:
     """Sender mappings, longest pattern first so specifics beat generals."""
     try:
         with _lock:
-            rows = _get().execute(
-                "SELECT pattern, category, promo_sensitive FROM sender_map"
-                " ORDER BY length(pattern) DESC, pattern"
-            ).fetchall()
-        return [{"pattern": str(r["pattern"]), "category": str(r["category"]),
-                 "promo_sensitive": bool(r["promo_sensitive"])} for r in rows]
+            try:
+                rows = _get().execute(
+                    "SELECT pattern, category, promo_sensitive, subject_contains FROM sender_map"
+                    " ORDER BY length(pattern) DESC, pattern"
+                ).fetchall()
+                return [{"pattern": str(r["pattern"]), "category": str(r["category"]),
+                         "promo_sensitive": bool(r["promo_sensitive"]),
+                         "subject_contains": str(r["subject_contains"] or "")} for r in rows]
+            except (sqlite3.OperationalError, sqlite3.ProgrammingError, IndexError, KeyError):
+                rows = _get().execute(
+                    "SELECT pattern, category, promo_sensitive FROM sender_map"
+                    " ORDER BY length(pattern) DESC, pattern"
+                ).fetchall()
+                return [{"pattern": str(r["pattern"]), "category": str(r["category"]),
+                         "promo_sensitive": bool(r["promo_sensitive"]),
+                         "subject_contains": ""} for r in rows]
     except Exception as exc:
         logger.warning("store.get_sender_map failed: %s", exc)
         return []
 
 
-def add_sender_map(pattern: str, category: str, promo_sensitive: bool = True) -> list[dict]:
+def add_sender_map(pattern: str, category: str, promo_sensitive: bool = True,
+                   subject_contains: str = "") -> list[dict]:
     pattern = (pattern or "").strip().lower()
     category = (category or "").strip()
+    subject_contains = (subject_contains or "").strip().lower()
     if not pattern or not category:
         raise ValueError("pattern and category are required")
     add_category(category)
     try:
         with _lock:
             _get().execute(
-                "INSERT OR REPLACE INTO sender_map (pattern, category, promo_sensitive, created_at)"
-                " VALUES (?, ?, ?, ?)",
-                (pattern, category, 1 if promo_sensitive else 0, time.time()),
+                "INSERT OR REPLACE INTO sender_map"
+                " (pattern, category, promo_sensitive, created_at, subject_contains)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (pattern, category, 1 if promo_sensitive else 0, time.time(), subject_contains),
             )
             _get().commit()
     except Exception as exc:
