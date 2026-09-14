@@ -23,6 +23,8 @@ const state = {
   skippedItems: [],       // metadata for those hidden emails
   todoIds: new Set(),     // ids parked on the TODO page (never deletable)
   pendingTodoId: null,    // email awaiting due-date confirmation in the modal
+  pendingRecatId: null,   // email awaiting category choice in the modal
+  recatCats: [],          // allowed categories cache for the picker
   searchQuery: "",        // active search text ("" = no search)
   searchResults: null,    // null = group view; array = search results view
   viewMode: (() => { try { return localStorage.getItem("gmailer-view-mode") || "senders"; } catch (e) { return "senders"; } })(),
@@ -65,6 +67,7 @@ const el = {
   position: $("position"), positionTotal: $("positionTotal"),
   undoTopBtn: $("undoTopBtn"), reloadBtn: $("reloadBtn"), clearCacheBtn: $("clearCacheBtn"), todoCount: $("todoCount"), searchInput: $("searchInput"),
   todoModal: $("todoModal"), todoModalSub: $("todoModalSub"), todoDueInput: $("todoDueInput"), todoModalCancel: $("todoModalCancel"), todoModalSave: $("todoModalSave"),
+  recatModal: $("recatModal"), recatModalSub: $("recatModalSub"), recatSelect: $("recatSelect"), recatModalCancel: $("recatModalCancel"), recatModalAuto: $("recatModalAuto"), recatModalSave: $("recatModalSave"),
   toasts: $("toasts"),
   emptyScreen: $("emptyScreen"), emptyStat: $("emptyStat"), emptyReload: $("emptyReload"),
   groupHeader: $("groupHeader"), groupTitle: $("groupTitle"), groupCount: $("groupCount"), groupOverview: $("groupOverview"), bulkDeleteBtn: $("bulkDeleteBtn"), bulkArchiveBtn: $("bulkArchiveBtn"), emailCards: $("emailCards"), remapCatsBtn: $("remapCatsBtn"),
@@ -538,7 +541,7 @@ async function remapCategories() {
   toast("Re-evaluating categories…", "info", { duration: 2000 });
   try {
     const res = await api("/api/categories/remap", { method: "POST", body: "{}" });
-    toast(`Remapped ${res.scanned} emails · ${res.changed} changed`, "ok", { duration: 3000 });
+    toast(`Remapped ${res.scanned} emails · ${res.changed} changed${res.locked ? ` · ${res.locked} locked kept` : ""}`, "ok", { duration: 3000 });
   } catch (e) {
     toast(`Remap failed: ${e.message}`, "err", { duration: 4000 });
   } finally {
@@ -546,6 +549,60 @@ async function remapCategories() {
     el.remapCatsBtn.classList.remove("opacity-50");
   }
   await loadQueue();
+}
+
+async function remapOne(id) {
+  if (!id) return;
+  try {
+    const res = await api("/api/categories/remap-one", { method: "POST", body: JSON.stringify({ id }) });
+    if (res.changed) toast(`${res.old || "?"} → ${res.category}`, "ok", { duration: 2200 });
+    else toast(`Already ${res.category || "categorized"} — no change`, "info", { duration: 1800 });
+    refreshMainView();
+  } catch (e) {
+    toast(`Re-evaluate failed: ${e.message}`, "err", { duration: 3000 });
+  }
+}
+
+async function openRecatModal(id) {
+  const item = currentItemOf(id);
+  if (!item) { toast("That email is no longer in the queue", "err", { duration: 2000 }); return; }
+  if (!state.recatCats.length) {
+    try {
+      state.recatCats = (await api("/api/categories")).items || [];
+    } catch (e) {
+      toast(`Could not load categories: ${e.message}`, "err", { duration: 3000 });
+      return;
+    }
+  }
+  const current = emailCategory(item);
+  state.pendingRecatId = id;
+  el.recatModalSub.textContent = item.subject || "(no subject)";
+  el.recatSelect.innerHTML = state.recatCats.map((c) =>
+    `<option value="${esc(c)}"${c === current ? " selected" : ""}>${esc(c)}${c === current ? " (current)" : ""}</option>`).join("");
+  el.recatModal.classList.remove("hidden");
+  el.recatModal.classList.add("flex");
+  setTimeout(() => el.recatSelect.focus(), 50);
+}
+
+function closeRecatModal() {
+  state.pendingRecatId = null;
+  el.recatModal.classList.add("hidden");
+  el.recatModal.classList.remove("flex");
+}
+
+async function confirmRecatModal() {
+  const id = state.pendingRecatId;
+  if (!id) { closeRecatModal(); return; }
+  try {
+    const row = await api("/api/categories/set", {
+      method: "POST", body: JSON.stringify({ id, category: el.recatSelect.value }),
+    });
+    closeRecatModal();
+    toast(`Set to ${row.category} (locked from bulk Remap)`, "ok", { duration: 2400 });
+    refreshMainView();
+  } catch (e) {
+    toast(`Set failed: ${e.message}`, "err", { duration: 3000 });
+  }
 }
 
 /* ───────────────────────────── Groups ──────────────────────────── */
@@ -895,6 +952,7 @@ function emailCard(it) {
     <button data-cardact="todo" data-id="${esc(it.id)}" class="rounded bg-sky-500/15 px-2 py-1 text-[10px] font-bold text-sky-700 dark:text-sky-300 hover:bg-sky-500/30 transition">${isTodo ? "✓ Todo" : "Todo"}</button>
     ${inQueue ? `<button data-cardact="keep" data-id="${esc(it.id)}" class="rounded bg-slate-500/15 px-2 py-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-500/30 transition">Keep</button>` : ""}
     <a href="https://mail.google.com/mail/u/0/#inbox/${esc(it.id)}" target="_blank" rel="noopener noreferrer" class="rounded bg-slate-500/15 px-2 py-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-500/30 transition" title="Open in Gmail">Gmail ↗</a>
+    <button data-cardact="recat" data-id="${esc(it.id)}" class="rounded bg-slate-500/15 px-2 py-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-500/30 transition" title="Set or re-evaluate this email's category">⟳</button>
     <button data-cardact="ruleBlock" data-id="${esc(it.id)}" class="rounded bg-red-500/15 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition">Block</button>
     ${it.promo ? `<button data-cardact="rulePromoBlock" data-id="${esc(it.id)}" class="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition">Auto-del promos</button>` : ""}`;
 
@@ -931,19 +989,12 @@ function detailHTML(it) {
   const d = state.detail.get(it.id);
   if (!d) fetchDetail(it.id);
   const atts = ((d && d.attachments) || it.attachments || []);
-  const attPreview = (a) => {
+  const attChip = (a) => {
     const url = `/api/messages/${esc(it.id)}/attachments/${esc(a.attachmentId)}`;
     const mime = a.mimeType || "";
-    const label = `📎 ${esc(a.filename || "attachment")} <span class="opacity-70 font-normal">${fmtSize(a.size)}</span>`;
-    if (mime.startsWith("image/")) {
-      return `<a href="${url}" target="_blank" rel="noopener noreferrer" title="Click to open full size"><img src="${url}" loading="lazy" alt="${esc(a.filename || "attachment")}" class="mt-2 max-h-48 rounded-lg border border-slate-200 dark:border-slate-700" /></a>`;
-    }
-    if (mime === "application/pdf" || /\.pdf$/i.test(a.filename || "")) {
-      return `<div class="mt-2"><embed src="${url}" type="application/pdf" class="h-64 w-full rounded-lg border border-slate-200 dark:border-slate-700" /><a href="${url}" target="_blank" rel="noopener noreferrer" class="mt-1 inline-block rounded-lg bg-violet-500/15 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-500/30 transition">${label}</a></div>`;
-    }
-    return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="rounded-lg bg-violet-500/15 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-500/30 transition" title="${esc(mime || "file")} · ${fmtSize(a.size)} — opens in a new tab">${label}</a>`;
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="rounded-lg bg-violet-500/15 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-500/30 transition" title="${esc(mime || "file")} · ${fmtSize(a.size)} — fetches from Gmail only when clicked, never stored">📎 ${esc(a.filename || "attachment")} <span class="opacity-70 font-normal">${fmtSize(a.size)}</span></a>`;
   };
-  const attHTML = atts.length ? `<div class="mt-2 flex items-start gap-1.5 flex-wrap">${atts.map(attPreview).join("")}</div>` : "";
+  const attHTML = atts.length ? `<div class="mt-2 flex items-start gap-1.5 flex-wrap">${atts.map(attChip).join("")}</div>` : "";
   const sum = (d && d.summary) || null;
   const sender = (d && d.sender_email) || it.sender_email || "";
   const dateMs = (d && d.internal_date_ms) || it.internal_date_ms;
@@ -1690,6 +1741,18 @@ el.todoDueInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); confirmTodoModal(); }
   else if (e.key === "Escape") { e.preventDefault(); closeTodoModal(); }
 });
+el.recatModalSave.addEventListener("click", confirmRecatModal);
+el.recatModalCancel.addEventListener("click", closeRecatModal);
+el.recatModalAuto.addEventListener("click", () => {
+  const id = state.pendingRecatId;
+  closeRecatModal();
+  remapOne(id);
+});
+el.recatModal.addEventListener("click", (e) => { if (e.target === el.recatModal) closeRecatModal(); });
+el.recatSelect.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); confirmRecatModal(); }
+  else if (e.key === "Escape") { e.preventDefault(); closeRecatModal(); }
+});
 el.remapCatsBtn.addEventListener("click", remapCategories);
 
 el.emailCards.addEventListener("click", (e) => {
@@ -1706,6 +1769,7 @@ document.addEventListener("click", (e) => {
   const id = b.dataset.id;
   const act = b.dataset.cardact;
   if (act === "skip") skipForNowById(id);
+  else if (act === "recat") openRecatModal(id);
   else if (act === "todo") toggleTodo(id);
   else if (act === "ruleBlock") issueRuleBlock(id);
   else if (act === "rulePromoBlock") issueRulePromoBlock(id);

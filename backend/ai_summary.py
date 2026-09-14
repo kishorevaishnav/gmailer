@@ -171,9 +171,11 @@ def _llm_category_only(msg: dict, categories: list[str]) -> str | None:
     return canonical_category(text, categories)
 
 
-def recategorize_message(msg: dict, categories: list[str]) -> str:
+def recategorize_message(msg: dict, categories: list[str], force: bool = False) -> str:
     cats = categories or _allowed_categories()
     current = (msg.get("category") or "").strip()
+    if msg.get("category_locked") and not force:
+        return current
     mapped = sender_mapped_category(msg, cats)
     if mapped is not None:
         return mapped

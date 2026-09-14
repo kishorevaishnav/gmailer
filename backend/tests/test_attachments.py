@@ -53,6 +53,22 @@ def test_recategorize_keeps_valid_and_repairs_case():
     assert recategorize_message({"sender_email": "x@y.com", "category": "Banks"}, CATS) == "Banks"
 
 
+def test_manual_lock_survives_remap_and_auto_unlocks():
+    from backend import store as _store
+    from backend.ai_summary import recategorize_message
+    _store.add_category("Banks")
+    _store.add_category("Personal")
+    cats = _store.get_categories()
+    _store.save_message({"id": "m1", "sender_email": "citicards@info6.citi.com",
+                         "sender_name": "Citi", "subject": "Statement",
+                         "snippet": "", "internal_date_ms": 1, "label_ids": [],
+                         "body_text": "", "category": "Personal"})
+    row = _store.set_message_category("m1", "Personal", locked=True)
+    assert row["category_locked"] is True
+    assert recategorize_message(row, cats) == "Personal"
+    assert recategorize_message(row, cats, force=True) == "Banks"
+
+
 def test_recategorize_stale_category_uses_llm(monkeypatch):
     import backend.ai_summary as summaries
     from backend.ai_summary import recategorize_message

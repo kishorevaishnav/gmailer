@@ -732,8 +732,12 @@ class CategoryRemapRequest(BaseModel):
 def api_categories_remap(req: CategoryRemapRequest):
     limit = max(1, min(int(req.limit or 500), 2000))
     cats = store.get_categories()
-    scanned = changed = 0
+    scanned = changed = locked = 0
     for m in store.list_messages(limit=limit):
+        scanned += 1
+        if m.get("category_locked"):
+            locked += 1
+            continue
         new_cat = ai_summary.recategorize_message(m, cats)
         if (new_cat or "") != (m.get("category") or ""):
             summary = m.get("summary")
@@ -742,8 +746,49 @@ def api_categories_remap(req: CategoryRemapRequest):
             m["category"] = new_cat
             store.save_message(m, summary if isinstance(summary, dict) else None)
             changed += 1
-        scanned += 1
-    return {"scanned": scanned, "changed": changed}
+    return {"scanned": scanned, "changed": changed, "locked": locked}
+
+
+class CategorySetRequest(BaseModel):
+    id: str
+    category: str
+
+
+@app.post("/api/categories/set")
+def api_categories_set(req: CategorySetRequest):
+    mid = (req.id or "").strip()
+    wanted = (req.category or "").strip()
+    if not mid or not wanted:
+        raise HTTPException(status_code=400, detail="id and category required")
+    canonical = ai_summary.canonical_category(wanted, store.get_categories())
+    if not canonical:
+        raise HTTPException(status_code=400, detail=f"unknown category: {wanted}")
+    row = store.set_message_category(mid, canonical, locked=True)
+    if row is None:
+        raise HTTPException(status_code=404, detail="message not cached")
+    return row
+
+
+class CategoryRemapOneRequest(BaseModel):
+    id: str
+
+
+@app.post("/api/categories/remap-one")
+def api_categories_remap_one(req: CategoryRemapOneRequest):
+    mid = (req.id or "").strip()
+    if not mid:
+        raise HTTPException(status_code=400, detail="id required")
+    msg = store.load_message(mid)
+    if msg is None:
+        service = require_service()
+        msg = _run(gmail_service.get_full, service, mid)
+        msg["summary"] = ai_summary.generate_summary(msg)
+        store.save_message(msg)
+    old = msg.get("category") or ""
+    new_cat = ai_summary.recategorize_message(msg, store.get_categories(), force=True)
+    if (new_cat or "") != old or msg.get("category_locked"):
+        store.set_message_category(mid, new_cat, locked=False)
+    return {"id": mid, "old": old, "category": new_cat, "changed": (new_cat or "") != old}
 
 
 @app.post("/api/categories/add")

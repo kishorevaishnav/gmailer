@@ -215,6 +215,10 @@ def _get() -> sqlite3.Connection:
         except (sqlite3.OperationalError, sqlite3.ProgrammingError):
             pass
         try:
+            _conn.execute("ALTER TABLE messages ADD COLUMN category_locked INTEGER DEFAULT 0")
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError):
+            pass
+        try:
             _conn.execute("ALTER TABLE rule_proposals ADD COLUMN observation_id INTEGER")
         except (sqlite3.OperationalError, sqlite3.ProgrammingError):
             pass  # column already present (new schema or a prior run)
@@ -330,6 +334,10 @@ def _message_row_to_dict(row) -> dict:
         "category": row["category"],
         "attachments": [],
     }
+    try:
+        msg["category_locked"] = bool(row["category_locked"])
+    except (IndexError, KeyError):
+        msg["category_locked"] = False
     if row["summary"]:
         try:
             msg["summary"] = json.loads(row["summary"])
@@ -431,6 +439,30 @@ def ids_missing_attachments(limit: int = 5000) -> list[str]:
     except Exception as exc:
         logger.warning("store.ids_missing_attachments failed: %s", exc)
         return []
+
+
+def set_message_category(message_id: str, category: str, locked: bool = True) -> dict | None:
+    try:
+        with _lock:
+            row = _get().execute("SELECT summary FROM messages WHERE id = ?", (message_id,)).fetchone()
+            if row is None:
+                return None
+            try:
+                summary = json.loads(row["summary"]) if row["summary"] else {}
+            except (json.JSONDecodeError, TypeError):
+                summary = {}
+            if not isinstance(summary, dict):
+                summary = {}
+            summary["category"] = category
+            _get().execute(
+                "UPDATE messages SET category = ?, summary = ?, category_locked = ? WHERE id = ?",
+                (category, json.dumps(summary, ensure_ascii=False), 1 if locked else 0, message_id),
+            )
+            _get().commit()
+    except Exception as exc:
+        logger.warning("store.set_message_category failed: %s", exc)
+        return None
+    return load_message(message_id)
 
 
 def load_summary(message_id: str) -> dict | None:
