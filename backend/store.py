@@ -120,6 +120,13 @@ CREATE TABLE IF NOT EXISTS rule_proposals (
     created_at        REAL,
     rejected_until    REAL
 );
+
+CREATE TABLE IF NOT EXISTS queue (
+    id        TEXT PRIMARY KEY,
+    item      TEXT NOT NULL,
+    added_at  REAL
+);
+CREATE INDEX IF NOT EXISTS idx_queue_added ON queue(added_at);
 """
 
 _DEFAULT_CATEGORIES = [
@@ -335,6 +342,72 @@ def clear_cache() -> int:
     return cleared
 
 
+# --- Queue persistence -------------------------------------------------------
+
+def save_queue_items(items: list[dict]) -> int:
+    """Save queue items to DB. Returns number saved."""
+    if not items:
+        return 0
+    now = time.time()
+    try:
+        with _lock:
+            conn = _get()
+            conn.executemany(
+                "INSERT OR REPLACE INTO queue (id, item, added_at) VALUES (?, ?, ?)",
+                [(it.get("id"), json.dumps(it), now) for it in items if it.get("id")],
+            )
+            conn.commit()
+        return len(items)
+    except Exception as exc:
+        logger.warning("store.save_queue failed: %s", exc)
+        return 0
+
+
+def delete_queue_item(item_id: str) -> int:
+    """Remove item from queue DB. Returns 1 if deleted, 0 if not found."""
+    try:
+        with _lock:
+            cur = _get().execute("DELETE FROM queue WHERE id = ?", (item_id,))
+            _get().commit()
+        return cur.rowcount
+    except Exception as exc:
+        logger.warning("store.delete_queue failed: %s", exc)
+        return 0
+
+
+def clear_queue() -> int:
+    """Clear all queue items. Returns number cleared."""
+    try:
+        with _lock:
+            cur = _get().execute("DELETE FROM queue")
+            _get().commit()
+        return cur.rowcount
+    except Exception as exc:
+        logger.warning("store.clear_queue failed: %s", exc)
+        return 0
+
+
+def get_queue_items() -> list[dict]:
+    """Return all queue items as dicts."""
+    try:
+        with _lock:
+            rows = _get().execute(
+                "SELECT id, item FROM queue ORDER BY added_at DESC"
+            ).fetchall()
+        return [json.loads(r["item"]) for r in rows]
+    except Exception as exc:
+        logger.warning("store.get_queue failed: %s", exc)
+        return []
+
+
+def queue_count() -> int:
+    try:
+        with _lock:
+            return int(_get().execute("SELECT COUNT(*) FROM queue").fetchone()[0])
+    except Exception:
+        return 0
+
+
 def _is_promo(labels: list[str]) -> bool:
     return "CATEGORY_PROMOTIONS" in (labels or [])
 
@@ -464,6 +537,52 @@ def clear_skipped() -> int:
     return cleared
 
 
+# --- Promo-blocked senders -----------------------------------------------------
+# Senders whose PROMO mail is auto-deleted on every queue refresh.
+
+def list_promo_blocked() -> list[dict]:
+    try:
+        with _lock:
+            rows = _get().execute(
+                "SELECT email, sender_name FROM promo_blocked ORDER BY promo_blocked_at"
+            ).fetchall()
+        return [{"email": r["email"], "sender_name": r["sender_name"]} for r in rows]
+    except Exception as exc:
+        logger.warning("store.list_promo_blocked failed: %s", exc)
+        return []
+
+
+def add_promo_blocked(sender_email: str, sender_name: str = "") -> dict:
+    """Add sender to promo-blocked list. Returns dict with purged/skipped counts."""
+    sender_email = (sender_email or "").lower().strip()
+    sender_name = (sender_name or "").strip()
+    if not sender_email:
+        return {"purged": 0, "skipped": 0}
+    now = time.time()
+    try:
+        with _lock:
+            _get().execute(
+                "INSERT OR REPLACE INTO promo_blocked (email, sender_name, promo_blocked_at) VALUES (?, ?, ?)",
+                (sender_email, sender_name, now),
+            )
+            _get().commit()
+    except Exception as exc:
+        logger.warning("store.add_promo_blocked failed: %s", exc)
+    return {"purged": 0, "skipped": 0}  # Actual purge happens in API layer
+
+
+def remove_promo_blocked(sender_email: str) -> None:
+    sender_email = (sender_email or "").lower().strip()
+    if not sender_email:
+        return
+    try:
+        with _lock:
+            _get().execute("DELETE FROM promo_blocked WHERE email = ?", (sender_email,))
+            _get().commit()
+    except Exception as exc:
+        logger.warning("store.remove_promo_blocked failed: %s", exc)
+
+
 # --- Rules (skills) ----------------------------------------------------------
 
 def next_precedence() -> int:
@@ -541,31 +660,27 @@ def move_rule(rule_id: int, direction: int) -> None:
         conn.commit()
 
 
-def reorder_rules(ordered_ids: list[int]) -> None:
-    """Assign precedence 1..N in the given order, avoiding UNIQUE collisions by
-    first parking every rule at a negative precedence."""
-    ids = [int(i) for i in ordered_ids]
-    if not ids:
-        return
-    with _lock:
-        conn = _get()
-        now = time.time()
-        visible = [r["id"] for r in list_rules()]
-        missing = [r for r in visible if r not in ids]
-        ids = ids + missing  # keep anything the client didn't send at the tail
-        for i, rid in enumerate(ids):
-            conn.execute("UPDATE rules SET precedence = ?, updated_at = ? WHERE id = ?",
-                         (-(i + 1), now, rid))
-        for i, rid in enumerate(ids):
-            conn.execute("UPDATE rules SET precedence = ?, updated_at = ? WHERE id = ?",
-                         (i + 1, now, rid))
-        conn.commit()
-
-
 def delete_rule(rule_id: int) -> None:
     with _lock:
         _get().execute("DELETE FROM rules WHERE id = ?", (rule_id,))
         _get().commit()
+
+
+def reorder_rules(rule_ids: list[int]) -> None:
+    with _lock:
+        conn = _get()
+        existing = {r["id"] for r in list_rules()}
+        ordered = [i for i in rule_ids if i in existing]
+        for r in list_rules():
+            if r["id"] not in ordered:
+                ordered.append(r["id"])
+        if not ordered:
+            return
+        for r in list_rules():
+            conn.execute("UPDATE rules SET precedence = ? WHERE id = ?", (-r["id"], r["id"]))
+        for pos, rid in enumerate(ordered, start=1):
+            conn.execute("UPDATE rules SET precedence = ? WHERE id = ?", (pos, rid))
+        conn.commit()
 
 
 # --- Traces (raw layer) ------------------------------------------------------

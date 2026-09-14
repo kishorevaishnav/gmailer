@@ -105,7 +105,16 @@ async function api(path, opts = {}) {
     throw new Error("Session expired — sign in again.");
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.detail || res.statusText || "Request failed");
+  if (!res.ok) {
+    const detail = data.detail ?? data;
+    const msg = typeof detail === "string" ? detail
+      : detail && detail.errors ? detail.errors.map((e) => `line ${e.line}: ${e.msg}`).join("\n")
+      : res.statusText || "Request failed";
+    const err = new Error(msg);
+    err.detail = detail;
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 
@@ -1196,6 +1205,174 @@ async function refreshRulesData() {
     renderRulesWiki();
   } catch (e) {
     // non-fatal
+  }
+}
+
+/* ───────────────────────────── Rules CRUD + editor ─────────────── */
+function editorShowErrors(err) {
+  const detail = err && err.detail;
+  const errors = detail && detail.errors;
+  if (errors && Array.isArray(errors)) {
+    el.editorErrors.textContent = errors.map((e) => `line ${e.line}: ${e.msg}`).join("\n");
+  } else {
+    el.editorErrors.textContent = err ? String(err.message || err) : "Save failed";
+  }
+  el.editorErrors.classList.remove("hidden");
+}
+
+function openEditor(ruleId) {
+  state.editorOpen = true;
+  state.editorRuleId = ruleId ?? null;
+  state.editorApplyNow = false;
+  el.editorApplyNow.checked = false;
+  el.editorErrors.classList.add("hidden");
+  el.editorErrors.textContent = "";
+  if (ruleId == null) {
+    state.editorMarkdown = "---\nname: Untitled rule\nenabled: true\naction: trash\nscope: all_mail\n---\n## match\nsender: \n\n## about\n";
+    el.editorTitle.textContent = "New Rule";
+    el.editorDelete.classList.add("hidden");
+  } else {
+    const rule = state.rules.find((r) => r.id === ruleId);
+    state.editorMarkdown = rule ? rule.skill_md : "";
+    el.editorTitle.textContent = rule && rule.parsed ? `Edit: ${rule.parsed.name}` : `Edit rule #${ruleId}`;
+    el.editorDelete.classList.remove("hidden");
+  }
+  el.editorContent.value = state.editorMarkdown;
+  el.normalView.classList.add("hidden");
+  el.editorView.classList.remove("hidden");
+  el.editorView.classList.add("flex");
+  setTimeout(() => el.editorContent.focus(), 50);
+}
+
+function cancelEditor() {
+  state.editorOpen = false;
+  state.editorRuleId = null;
+  el.editorView.classList.add("hidden");
+  el.editorView.classList.remove("flex");
+  el.normalView.classList.remove("hidden");
+}
+
+async function saveEditor() {
+  const md = el.editorContent.value;
+  state.editorMarkdown = md;
+  el.editorErrors.classList.add("hidden");
+  try {
+    if (state.editorRuleId == null) {
+      await api("/api/rules", { method: "POST", body: JSON.stringify({ markdown: md }) });
+      toast("Rule created", "ok", { duration: 2000 });
+    } else {
+      await api(`/api/rules/${state.editorRuleId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ markdown: md }),
+      });
+      toast("Rule saved", "ok", { duration: 2000 });
+      if (state.editorApplyNow) await applyRuleNow(state.editorRuleId, true);
+    }
+    cancelEditor();
+    await refreshRulesData();
+  } catch (e) {
+    editorShowErrors(e);
+  }
+}
+
+async function deleteEditorRule() {
+  if (state.editorRuleId == null) { cancelEditor(); return; }
+  if (!confirm("Delete this rule?")) return;
+  try {
+    await api(`/api/rules/${state.editorRuleId}`, { method: "DELETE" });
+    toast("Rule deleted", "info", { duration: 1800 });
+    cancelEditor();
+    await refreshRulesData();
+  } catch (e) {
+    toast(`Delete failed: ${e.message}`, "err", { duration: 3000 });
+  }
+}
+
+async function toggleRule(id) {
+  const rule = state.rules.find((r) => r.id === id);
+  try {
+    await api(`/api/rules/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: !(rule && rule.enabled) }) });
+    await refreshRulesData();
+  } catch (e) {
+    toast(`Toggle failed: ${e.message}`, "err", { duration: 3000 });
+  }
+}
+
+async function moveRule(id, dir) {
+  try {
+    await api(`/api/rules/${id}/move`, { method: "POST", body: JSON.stringify({ direction: dir }) });
+    await refreshRulesData();
+  } catch (e) {
+    toast(`Move failed: ${e.message}`, "err", { duration: 3000 });
+  }
+}
+
+async function deleteRule(id) {
+  if (!confirm("Delete this rule?")) return;
+  try {
+    await api(`/api/rules/${id}`, { method: "DELETE" });
+    toast("Rule deleted", "info", { duration: 1800 });
+    if (state.editorRuleId === id) cancelEditor();
+    await refreshRulesData();
+  } catch (e) {
+    toast(`Delete failed: ${e.message}`, "err", { duration: 3000 });
+  }
+}
+
+async function applyRuleNow(id, silent) {
+  try {
+    const res = await api(`/api/rules/${id}/apply-now`, { method: "POST", body: "{}" });
+    if (!silent) toast(`Applied: ${res.matched || 0} matched (${res.trash || 0} trash · ${res.star || 0} star · ${res.skip || 0} skip)`, "ok", { duration: 3000 });
+    return res;
+  } catch (e) {
+    if (!silent) toast(`Apply failed: ${e.message}`, "err", { duration: 4000 });
+    throw e;
+  }
+}
+
+async function approveProposal(id) {
+  try {
+    await api(`/api/proposals/${id}/approve`, { method: "POST", body: JSON.stringify({ apply_now: false }) });
+    toast("Proposal approved — rule created", "ok", { duration: 2200 });
+    await refreshRulesData();
+  } catch (e) {
+    toast(`Approve failed: ${e.message}`, "err", { duration: 3000 });
+  }
+}
+
+function editProposal(id) {
+  const p = state.proposals.find((x) => x.id === id);
+  if (!p) return;
+  openEditor(null);
+  el.editorTitle.textContent = `New rule from proposal: ${p.label}`;
+  el.editorContent.value = p.proposed_skill_md || "";
+}
+
+async function rejectProposal(id) {
+  try {
+    await api(`/api/proposals/${id}/reject`, { method: "POST", body: "{}" });
+    toast("Proposal rejected", "info", { duration: 2000 });
+    await refreshRulesData();
+  } catch (e) {
+    toast(`Reject failed: ${e.message}`, "err", { duration: 3000 });
+  }
+}
+
+async function dismissWiki(id) {
+  try {
+    await api(`/api/wiki/observations/${id}/dismiss`, { method: "POST", body: "{}" });
+    await refreshRulesData();
+  } catch (e) {
+    toast(`Dismiss failed: ${e.message}`, "err", { duration: 3000 });
+  }
+}
+
+function createRuleFromWiki(id) {
+  const w = state.wikiObservations.find((x) => x.id === id);
+  openEditor(null);
+  if (w) {
+    el.editorTitle.textContent = `New rule from observation: ${w.target}`;
+    el.editorContent.value = `---\nname: ${w.target}\nenabled: true\naction: trash\nscope: all_mail\n---\n## match\nsender: ${w.target}\n\n## about\n${w.summary || ""}\n`;
   }
 }
 

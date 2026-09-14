@@ -714,3 +714,8 @@ def index():
 @app.get("/email-viewer", include_in_schema=False)
 def email_viewer():
     return FileResponse(config.STATIC_DIR / "email-viewer.html")
+
+
+@app.get("/rules", include_in_schema=False)
+def rules_page():
+    return FileResponse(config.STATIC_DIR / "rules.html")

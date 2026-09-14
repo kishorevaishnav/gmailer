@@ -358,6 +358,143 @@ _GROUP_CACHE: dict[tuple[str, str], dict] = {}
 _GROUP_CACHE_MAX = 50
 
 
+_CATEGORY_SYSTEM_PROMPT = (
+    "You are a high-level email category analyst. You receive a list of emails "
+    "grouped by their assigned category. For EACH category produce ONE summary "
+    "that describes what those emails are collectively about. "
+    "Write a multi-line summary — be descriptive and thorough, more verbose "
+    "than a single email one-liner. Cover the main themes, recurring topics, "
+    "types of requests, and patterns across the emails in that category. "
+    "Do NOT break the summary into subcategories or sub-groups — keep it as "
+    "a single flowing description per category. "
+    "Output ONLY valid JSON. Never use markdown fences, never add commentary "
+    "outside the JSON."
+)
+
+
+def _normalize_category_summary(value) -> str:
+    v = (str(value or "").strip())
+    return v if v else "No summary available."
+
+
+def categorize_and_summarize(messages: list[dict]) -> list[dict]:
+    """Group messages by category and produce a multi-line summary per category.
+
+    Does NOT summarize subcategories — each category gets one flowing
+    multi-line summary covering all emails in that category.
+
+    Returns list of {"category": str, "count": int, "summary": str}.
+    """
+    if not messages:
+        return []
+
+    groups: dict[str, list[dict]] = {}
+    for m in messages:
+        cat = (m.get("summary") or {}).get("category") or m.get("category") or "Unclear"
+        groups.setdefault(cat, []).append(m)
+
+    results = []
+    for cat, msgs in groups.items():
+        summary = _ollama_category_summary(cat, msgs)
+        if summary is None:
+            summary = _mock_category_summary(cat, msgs)
+        results.append({"category": cat, "count": len(msgs), "summary": summary})
+    return results
+
+
+def _ollama_category_summary(category: str, messages: list[dict]) -> str | None:
+    if not config.OLLAMA_MODEL:
+        return None
+
+    cat_msgs = messages[: config.GROUP_MAX_EMAILS]
+    parts = [f"Category: {category}", f"Number of emails: {len(cat_msgs)}", ""]
+    for i, e in enumerate(cat_msgs, 1):
+        subject = (e.get("subject") or "(no subject)").strip()[:200]
+        sender = e.get("sender_name") or e.get("sender_email") or "Unknown"
+        one_liner = (e.get("summary") or {}).get("one_liner", "")
+        body = (e.get("body_text") or e.get("snippet") or "").strip()
+        body = body[: config.SUMMARY_MAX_BODY_CHARS]
+        parts.append(f"Email {i} — From: {sender}, Subject: {subject}")
+        if one_liner:
+            parts.append(f"  Summary: {one_liner}")
+        if body:
+            parts.append(f"  Body: {body}")
+        parts.append("")
+
+    prompt = "\n".join(parts)
+    prompt += (
+        "\nWrite a multi-line summary for this category. Cover the main themes, "
+        "recurring topics, types of requests, and patterns. Be thorough — this "
+        "summary can span multiple lines. Do NOT split into subcategories."
+    )
+
+    payload = {
+        "model": config.OLLAMA_MODEL,
+        "system": _CATEGORY_SYSTEM_PROMPT,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+        "keep_alive": "30m",
+        "format": "json",
+        "options": {"temperature": 0.3, "num_predict": 800},
+    }
+
+    try:
+        resp = requests.post(
+            config.OLLAMA_URL.rstrip("/") + "/api/chat",
+            json=payload,
+            timeout=config.SUMMARY_TIMEOUT_SECONDS,
+        )
+        resp.raise_for_status()
+        content = (resp.json().get("message") or {}).get("content", "")
+    except Exception as exc:
+        logger.warning("Ollama category summarization unavailable: %s", exc)
+        return None
+
+    parsed = _extract_category_summary_text(content)
+    if parsed is None:
+        logger.warning("Ollama category summary unparseable: %.160s", content)
+        return None
+    return parsed
+
+
+def _extract_category_summary_text(text: str) -> str | None:
+    """Extract the summary text from the category summary response."""
+    text = re.sub(r"```(?:json)?\s*|\s*```", "", text, flags=re.IGNORECASE).strip()
+    # Try JSON first
+    s, e = text.find("{"), text.rfind("}")
+    if s != -1 and e > s:
+        try:
+            data = json.loads(text[s : e + 1])
+            if isinstance(data, dict):
+                for key in ("summary", "category_summary", "description", "text"):
+                    if isinstance(data.get(key), str) and data[key].strip():
+                        return data[key].strip()
+                # If it's an object with a nested summary, look deeper
+                for v in data.values():
+                    if isinstance(v, str) and len(v) > 20:
+                        return v.strip()
+        except (json.JSONDecodeError, ValueError):
+            pass
+    # Fall back: treat the whole text as the summary (stripped of markdown)
+    if text and len(text.strip()) > 5:
+        return text.strip()
+    return None
+
+
+def _mock_category_summary(category: str, messages: list[dict]) -> str:
+    subjects = []
+    for m in messages:
+        s = (m.get("subject") or "(no subject)").strip()[:100]
+        subjects.append(s)
+    bullet_points = "\n".join(f"• {s}" for s in subjects[:10])
+    if len(subjects) > 10:
+        bullet_points += f"\n• ... and {len(subjects) - 10} more"
+    return (
+        f"{category} — {len(messages)} email{'s' if len(messages) != 1 else ''}.\n"
+        f"Key subjects:\n{bullet_points}"
+    )
+
+
 def clear_in_memory_caches() -> None:
     """Drop per-message + group summary caches (used on 'Clear cache')."""
     _CACHE.clear()

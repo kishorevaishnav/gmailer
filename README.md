@@ -91,6 +91,37 @@ Open **http://localhost:8000**, click **Sign in with Google**, approve, and you 
 | `POST /api/bundles/{sender}/archive` | Bulk archive `{"message_ids": [...]}` |
 | `POST /api/undo` | Inverse of `{"action", "message_ids"}` |
 | `POST /api/auth/logout` | Delete saved token |
+| `GET  /rules` | Rules & Wiki management page |
+| `GET  /api/rules` | List all rules |
+| `POST /api/rules` | Create rule (skill markdown) |
+| `PUT  /api/rules/{id}` | Update rule (skill markdown) |
+| `DELETE /api/rules/{id}` | Delete rule |
+| `POST /api/rules/{id}/toggle` | Enable/disable |
+| `POST /api/rules/{id}/move` | Change precedence |
+| `POST /api/rules/{id}/apply` | Apply to existing mail |
+| `GET  /api/wiki` | List wiki observations |
+| `POST /api/wiki/{id}/dismiss` | Dismiss observation |
+| `POST /api/wiki/{id}/create-rule` | Create rule from observation |
+| `GET  /api/proposals` | List pending proposals |
+| `POST /api/proposals/{id}/approve` | Approve proposal |
+| `POST /api/proposals/{id}/reject` | Reject proposal |
+| `POST /api/evolve` | Run WikiSkill evolution loop |
+| `GET  /api/traces` | List recent traces |
+| `GET  /api/categories` | List categories |
+| `POST /api/categories/add` | Add category |
+| `POST /api/categories/remove` | Remove category |
+| `POST /api/skipped/add` | Skip for now |
+| `POST /api/skipped/remove` | Restore skipped |
+| `POST /api/skipped/clear` | Restore all skipped |
+| `GET  /api/skipped` | List skipped |
+| `GET  /api/blocked` | List blocked senders |
+| `GET  /api/promo-blocked` | List promo-blocked senders |
+| `POST /api/blocked/add` | Block sender |
+| `POST /api/blocked/remove` | Unblock sender |
+| `POST /api/promo-blocked/add` | Enable promo auto-delete |
+| `POST /api/promo-blocked/remove` | Disable promo auto-delete |
+| `POST /api/cache/clear` | Clear local cache |
+| `GET  /api/groups/{sender}/summarize` | Summarize group |
 
 Scope used: `gmail.modify` — read, trash, archive, star, label. No permanent deletion, no sends.
 
@@ -103,5 +134,4 @@ set an `LLM_API_KEY` and implement `_llm_summarize()` — the frontend already r
 ## Phase 2 (not built yet)
 
 - Quick-reply composer (`⏎` reserved).
-- Rules/automation (auto-archive sender patterns).
 - Sender allow/block lists + auto-thrash thresholds.

@@ -12,7 +12,6 @@
 </head>
 <body class="bg-slate-50 text-slate-900 h-screen w-screen overflow-hidden flex flex-col antialiased">
 
-  <!-- ═══════════════════════ HEADER ═══════════════════════ -->
   <header class="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-slate-200 bg-white">
     <svg viewBox="0 0 24 24" class="h-6 w-6 text-slate-800" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
@@ -22,21 +21,18 @@
       <p class="text-[11px] text-slate-500 truncate">Categorized · domain-grouped · AI summarized</p>
     </div>
     <div class="ml-auto flex items-center gap-2">
+      <span id="debugStatus" class="text-[10px] font-mono text-slate-400"></span>
       <span id="resultCount" class="text-[11px] text-slate-500 font-mono"></span>
       <button id="selectAllBtn" class="rounded-lg border border-slate-300 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 transition">Expand all</button>
     </div>
   </header>
 
-  <!-- ═══════════════════════ CATEGORY FILTER ═══════════════════════ -->
   <div class="shrink-0 flex items-center gap-2 px-5 py-2 border-b border-slate-200 bg-white overflow-x-auto">
     <span class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mr-1 shrink-0">Filter</span>
     <div id="categoryChips" class="flex items-center gap-1.5"></div>
   </div>
 
-  <!-- ═══════════════════════ BODY ═══════════════════════ -->
   <div class="flex-1 min-h-0 flex">
-
-    <!-- ─────────── LEFT: Domain groups ─────────── -->
     <aside class="w-[380px] shrink-0 flex flex-col border-r border-slate-200 bg-white overflow-hidden">
       <div class="shrink-0 flex items-center justify-between px-4 py-2 border-b border-slate-100">
         <span class="text-[11px] font-bold uppercase tracking-widest text-slate-500">Domains</span>
@@ -44,8 +40,6 @@
       </div>
       <div id="domainList" class="flex-1 min-h-0 overflow-y-auto p-3 space-y-2"></div>
     </aside>
-
-    <!-- ─────────── RIGHT: Detail ─────────── -->
     <main class="flex-1 min-w-0 flex flex-col bg-slate-50 overflow-hidden">
       <div id="detailView" class="flex-1 min-h-0 overflow-y-auto"></div>
     </main>

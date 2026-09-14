@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gmailer — Rules</title>
+  <script>
+    (function () {
+      try {
+        var q = new URLSearchParams(window.location.search).get("theme");
+        var t = q || localStorage.getItem("gmailer-theme") || "dark";
+        if (t !== "light") document.documentElement.classList.add("dark");
+      } catch (e) {}
+    })();
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = { darkMode: "class" };</script>
+  <link rel="stylesheet" href="/static/app.css" />
+  <style>
+    .rule-row.dragging { opacity: .5; }
+    #ruleMarkdown { font-family: "SF Mono","Fira Code",Consolas,monospace; line-height: 1.6; tab-size: 2; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100 min-h-screen antialiased">
+  <header class="sticky top-0 z-10 border-b border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-900/70 backdrop-blur">
+    <div class="mx-auto max-w-6xl px-5 py-3 flex items-center gap-3">
+      <a href="/" class="text-sm font-bold hover:text-violet-600 dark:hover:text-violet-300 transition">← Inbox</a>
+      <h1 class="text-lg font-black tracking-tight">Rules</h1>
+      <span id="ruleCount" class="text-xs text-slate-500"></span>
+      <div class="ml-auto flex items-center gap-2">
+        <button id="refreshBtn" class="rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-xs hover:border-slate-500 transition">↻ Refresh</button>
+        <button id="newRuleBtn" class="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-violet-700 transition">+ New Rule</button>
+      </div>
+    </div>
+    <div class="mx-auto max-w-6xl px-5 pb-2 flex items-center gap-2 text-xs">
+      <button data-tab="rules" class="tabBtn rounded-lg px-3 py-1.5 font-bold">Rules</button>
+      <button data-tab="proposals" class="tabBtn rounded-lg px-3 py-1.5 font-bold">Proposals <span id="propBadge"></span></button>
+      <button data-tab="wiki" class="tabBtn rounded-lg px-3 py-1.5 font-bold">Observations</button>
+      <button data-tab="traces" class="tabBtn rounded-lg px-3 py-1.5 font-bold">Activity</button>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-6xl px-5 py-5 grid grid-cols-1 lg:grid-cols-2 gap-5">
+    <section class="space-y-4 min-w-0">
+      <div id="tab-rules" class="space-y-2">
+        <p class="text-[11px] text-slate-500">First match wins — top of the list runs first. Use ▲▼ or drag to reorder.</p>
+        <ul id="rulesList" class="space-y-2"></ul>
+        <p id="rulesEmpty" class="hidden text-sm text-slate-500">No rules yet. Click + New Rule, or Block a sender from the inbox.</p>
+      </div>
+      <div id="tab-proposals" class="hidden space-y-2">
+        <ul id="proposalsList" class="space-y-2"></ul>
+        <p id="propsEmpty" class="hidden text-sm text-slate-500">No pending proposals.</p>
+      </div>
+      <div id="tab-wiki" class="hidden space-y-2">
+        <ul id="wikiList" class="space-y-2"></ul>
+        <p id="wikiEmpty" class="hidden text-sm text-slate-500">No observations yet.</p>
+      </div>
+      <div id="tab-traces" class="hidden space-y-2">
+        <div class="flex items-center gap-2 text-xs">
+          <label class="text-slate-500">Rule</label>
+          <select id="traceRuleFilter" class="rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1 text-xs"></select>
+          <button id="traceReload" class="rounded border border-slate-300 dark:border-slate-700 px-2 py-1 text-xs">Load</button>
+        </div>
+        <ul id="tracesList" class="space-y-1"></ul>
+      </div>
+    </section>
+
+    <section class="min-w-0">
+      <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-4 lg:sticky lg:top-28">
+        <div class="flex items-center gap-2 mb-3">
+          <h2 id="editorTitle" class="text-sm font-bold flex-1 truncate">New Rule</h2>
+          <span id="editorId" class="text-[10px] text-slate-500 font-mono"></span>
+        </div>
+        <div class="grid grid-cols-2 gap-2 mb-2">
+          <label class="text-[11px] text-slate-500">Name<input id="fName" type="text" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs" placeholder="Block noisy sender" /></label>
+          <label class="text-[11px] text-slate-500">Sender (email / @domain / name)<input id="fSender" type="text" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs font-mono" placeholder="spammer@example.com" /></label>
+          <label class="text-[11px] text-slate-500">Action<select id="fAction" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs"><option value="trash">trash</option><option value="star">star</option><option value="skip">skip</option></select></label>
+          <label class="text-[11px] text-slate-500">Scope<select id="fScope" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs"><option value="all_mail">all_mail</option><option value="promo_only">promo_only</option></select></label>
+          <label class="text-[11px] text-slate-500">Subject keywords (comma)<input id="fSubject" type="text" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs" placeholder="sale, deal" /></label>
+          <label class="text-[11px] text-slate-500">Categories (comma)<input id="fCategory" type="text" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs" placeholder="Newsletter" /></label>
+          <label class="text-[11px] text-slate-500">Emails/day threshold<input id="fEpd" type="number" min="1" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs" placeholder="" /></label>
+          <label class="text-[11px] text-slate-500 flex items-end gap-2 pb-2"><input id="fEnabled" type="checkbox" checked class="accent-violet-600 h-4 w-4" /> Enabled</label>
+        </div>
+        <label class="text-[11px] text-slate-500">About<textarea id="fAbout" rows="2" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs" placeholder="Why does this rule exist?"></textarea></label>
+        <button id="buildMdBtn" class="mt-2 rounded-lg border border-violet-500/40 px-3 py-1.5 text-xs font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-500/10 transition">↓ Build markdown from form</button>
+        <label class="mt-3 block text-[11px] text-slate-500">Skill markdown (source of truth)
+          <textarea id="ruleMarkdown" rows="12" spellcheck="false" class="mt-1 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 p-3 text-[12px] text-slate-800 dark:text-slate-200 focus:border-violet-500 focus:outline-none"></textarea>
+        </label>
+        <pre id="editorErrors" class="hidden mt-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-[11px] text-red-700 dark:text-red-300 font-mono whitespace-pre-wrap"></pre>
+        <div class="mt-3 flex items-center gap-2">
+          <label class="flex items-center gap-1.5 text-[11px] text-slate-500"><input id="applyNow" type="checkbox" class="accent-violet-600" /> Apply now</label>
+          <div class="ml-auto flex gap-2">
+            <button id="cancelBtn" class="rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-xs hover:border-slate-500 transition">Cancel</button>
+            <button id="deleteBtn" class="hidden rounded-lg bg-red-500/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-600 transition">Delete</button>
+            <button id="saveBtn" class="rounded-lg bg-violet-600 px-4 py-1.5 text-xs font-bold text-white hover:bg-violet-700 transition">Save</button>
+          </div>
+        </div>
+        <div id="ruleStats" class="mt-2 text-[11px] text-slate-500"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toasts" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 items-center"></div>
+  <script src="/static/rules.js"></script>
+</body>
+</html>

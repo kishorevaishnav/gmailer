@@ -124,6 +124,17 @@ def _frequency_cluster(traces: list[dict]) -> dict | None:
 
 # --- Agent roles -------------------------------------------------------------
 
+def _cluster_for_observation(obs: dict) -> dict:
+    """Rebuild a minimal cluster from a stored observation so the user can
+    turn any wiki row into a proposal."""
+    kind = obs["kind"]
+    target = obs["target"]
+    action = obs.get("action") or "trash"
+    return {"kind": kind, "target": target, "label": obs.get("summary") or f"{target}",
+            "dominant_action": action, "promo_only": kind == "sender" and action == "trash",
+            "emails_per_day": None, "items": [], "count": obs.get("evidence_count") or 0}
+
+
 def _ollama_agent(system: str, user: str) -> str | None:
     if not config.OLLAMA_MODEL:
         return None

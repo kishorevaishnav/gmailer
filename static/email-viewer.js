@@ -177,8 +177,10 @@ function renderCategoryChips() {
     const n = state.emails.filter((e) => e.category === c).length;
     html += chip(c, c, state.selectedCategoryId === c, n);
   }
-  $("#categoryChips").innerHTML = html;
-  $("#categoryChips").querySelectorAll("[data-cat]").forEach((b) =>
+  const chips = $("#categoryChips");
+  if (chips) chips.innerHTML = html;
+  const chipsContainer = $("#categoryChips");
+  if (chipsContainer) chipsContainer.querySelectorAll("[data-cat]").forEach((b) =>
     b.addEventListener("click", () => {
       state.selectedCategoryId = b.dataset.cat;
       state.activeEmailId = null;
@@ -189,8 +191,10 @@ function renderCategoryChips() {
 
 /* ───────────────────────────── Render: domain groups ───── */
 function renderDomainList() {
+  const list = $("#domainList");
+  const count = $("#domainCount");
   if (state.loading) {
-    $("#domainList").innerHTML =
+    if (list) list.innerHTML =
       `<div class="flex flex-col items-center justify-center h-full gap-3 p-8 text-center">
         ${I.spinner()}
         <p class="text-sm text-slate-600">Loading inbox…</p>
@@ -198,29 +202,30 @@ function renderDomainList() {
     return;
   }
   if (state.error) {
-    $("#domainList").innerHTML =
+    if (list) list.innerHTML =
       `<div class="flex flex-col items-center justify-center h-full gap-3 p-8 text-center">
         ${I.alert()}
         <p class="text-sm font-semibold text-slate-800">Could not load data</p>
         <p class="text-xs text-slate-500 max-w-xs">${esc(state.error)}</p>
         <button id="retryBtn" class="mt-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700">Retry</button>
       </div>`;
-    $("#retryBtn")?.addEventListener("click", loadData);
+    const retry = $("#retryBtn");
+    if (retry) retry.addEventListener("click", loadData);
     return;
   }
 
   const groups = groupedDomains();
-  $("#domainCount").textContent = `${groups.length} domain${groups.length === 1 ? "" : "s"}`;
+  if (count) count.textContent = `${groups.length} domain${groups.length === 1 ? "" : "s"}`;
   if (!groups.length) {
-    $("#domainList").innerHTML =
+    if (list) list.innerHTML =
       `<p class="text-sm text-slate-500 p-6 text-center">No emails match this category.</p>`;
     return;
   }
   let html = "";
   for (const [domain, items] of groups) html += domainCard(domain, items);
-  $("#domainList").innerHTML = html;
+  if (list) list.innerHTML = html;
 
-  $("#domainList").querySelectorAll("[data-toggle-domain]").forEach((btn) =>
+  list?.querySelectorAll("[data-toggle-domain]").forEach((btn) =>
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       const d = btn.dataset.toggleDomain;
@@ -229,7 +234,7 @@ function renderDomainList() {
       renderDomainList();
     })
   );
-  $("#domainList").querySelectorAll("[data-email-id]").forEach((row) =>
+  list?.querySelectorAll("[data-email-id]").forEach((row) =>
     row.addEventListener("click", () => {
       state.activeEmailId = row.dataset.emailId;
       renderAll();
@@ -293,12 +298,14 @@ function emailRow(e) {
 
 /* ───────────────────────────── Render: detail view ───── */
 async function renderDetail() {
+  const resultCount = $("#resultCount");
+  const detailView = $("#detailView");
   const e = state.emails.find((x) => x.id === state.activeEmailId);
   const total = visibleEmails().length;
-  $("#resultCount").textContent = `${total} email${total === 1 ? "" : "s"}`;
+  if (resultCount) resultCount.textContent = `${total} email${total === 1 ? "" : "s"}`;
 
   if (!e) {
-    $("#detailView").innerHTML =
+    if (detailView) detailView.innerHTML =
       `<div class="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
         ${I.mail()}
         <p class="text-sm font-semibold text-slate-700">No email selected</p>
@@ -349,7 +356,7 @@ async function renderDetail() {
       </div>`
     : "";
 
-  $("#detailView").innerHTML = `
+  if (detailView) detailView.innerHTML = `
     <div class="mx-auto max-w-3xl px-6 py-6">
       <div class="mb-4 flex items-center gap-2 flex-wrap text-[11px] text-slate-500">
         <span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">${esc(e.category)}</span>
@@ -404,7 +411,10 @@ async function loadData() {
   try {
     // Categories (independent of auth).
     let categories = [];
-    try { categories = await api("/api/categories"); } catch (e) { /* ignore */ }
+    try {
+      const catRes = await api("/api/categories");
+      categories = Array.isArray(catRes) ? catRes : (catRes && catRes.items) || [];
+    } catch (e) { /* ignore */ }
     state.categories = [...new Set(categories.map(String).filter(Boolean))];
 
     // 1) Try the local DB cache first — no OAuth required.
@@ -450,16 +460,21 @@ async function loadData() {
 
 /* ───────────────────────────── Init ───── */
 function init() {
-  $("#selectAllBtn").addEventListener("click", () => {
-    const allExpanded = visibleEmails().every((e) => state.expandedDomains.has(e.domain));
-    setAllDomains(!allExpanded);
-    $("#selectAllBtn").textContent = allExpanded ? "Expand all" : "Collapse all";
-  });
+  const selectAll = $("#selectAllBtn");
+  if (selectAll) {
+    selectAll.addEventListener("click", () => {
+      const allExpanded = visibleEmails().every((e) => state.expandedDomains.has(e.domain));
+      setAllDomains(!allExpanded);
+      selectAll.textContent = allExpanded ? "Expand all" : "Collapse all";
+    });
+  }
   const observer = new MutationObserver(() => {
     const allExpanded = visibleEmails().every((e) => state.expandedDomains.has(e.domain));
-    $("#selectAllBtn").textContent = allExpanded ? "Collapse all" : "Expand all";
+    const btn = $("#selectAllBtn");
+    if (btn) btn.textContent = allExpanded ? "Collapse all" : "Expand all";
   });
-  observer.observe(document.getElementById("domainList"), { childList: true, subtree: true });
+  const domainListEl = document.getElementById("domainList");
+  if (domainListEl) observer.observe(domainListEl, { childList: true, subtree: true });
 
   loadData();
 }

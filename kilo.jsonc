@@ -1,0 +1,1 @@
+{"$schema": "https://app.kilo.ai/config.json", "permission": {"read": {"credentials.json": "deny", "token.json": "deny", "client_secret*.json": "deny"}, "edit": {"credentials.json": "deny", "token.json": "deny", "client_secret*.json": "deny"}}}

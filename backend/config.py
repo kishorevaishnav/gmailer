@@ -54,5 +54,8 @@ PATTERN_RECENT_DAYS = 7                     # at least one action this recent
 RECENT_SAMPLE_SIZE = 5                      # latest N messages for promo ratio
 KEYWORD_MIN_LEN = 4
 FREQ_EMAILS_PER_DAY = 3                     # volume threshold
+# Queue AI summarization: how many emails to pre-summarize when the queue
+# loads (sequential). 0 = disabled. Higher = more pre-computed but slower load.
+QUEUE_SUMMARIZE_BATCH = 50
 EVOLVE_MAX_CLUSTERS = 10
 PROPOSAL_SUPPRESS_DAYS = 30
