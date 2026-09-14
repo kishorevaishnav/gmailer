@@ -183,3 +183,298 @@ html, body {
 
 /* History rows keep their tint; just add a subtle glass */
 [data-theme="apple"] #historyList > div { backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+
+/* ═══════════════ Rules & Wiki ═══════════════ */
+.rw-collapsed #rulesWikiBody { display: none; }
+.rw-collapsed #rulesWikiChevron { transform: rotate(-90deg); }
+
+.rw-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 0;
+}
+.rw-section-title:hover .rw-title-text { color: #6d28d9; }
+.dark .rw-section-title:hover .rw-title-text { color: #a78bfa; }
+
+.rule-card, .proposal-card, .wiki-card {
+  border-radius: 8px;
+  border: 1px solid;
+  padding: 6px 8px;
+  font-size: 11px;
+  transition: border-color 0.15s;
+}
+.rule-card {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
+.dark .rule-card {
+  border-color: #334155;
+  background: #1e293b;
+}
+.proposal-card {
+  border-color: rgba(139,92,246,.4);
+  background: rgba(139,92,246,.08);
+}
+.dark .proposal-card {
+  border-color: rgba(139,92,246,.25);
+  background: rgba(139,92,246,.06);
+}
+.wiki-card {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
+.dark .wiki-card {
+  border-color: #334155;
+  background: #1e293b;
+}
+
+.rule-name {
+  font-weight: 700;
+  font-size: 12px;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dark .rule-name { color: #e2e8f0; }
+
+.rule-meta {
+  color: #64748b;
+  font-size: 10px;
+  margin-top: 2px;
+}
+.dark .rule-meta { color: #94a3b8; }
+
+.rule-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+.rule-actions button {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.rule-actions .btn-toggle {
+  border-color: #cbd5e1;
+  background: #f1f5f9;
+  color: #475569;
+}
+.dark .rule-actions .btn-toggle {
+  border-color: #475569;
+  background: #334155;
+  color: #94a3b8;
+}
+.rule-actions .btn-edit {
+  border-color: rgba(139,92,246,.4);
+  background: rgba(139,92,246,.1);
+  color: #7c3aed;
+}
+.dark .rule-actions .btn-edit {
+  border-color: rgba(139,92,246,.25);
+  background: rgba(139,92,246,.06);
+  color: #c4b5fd;
+}
+.rule-actions .btn-apply {
+  border-color: rgba(16,185,129,.4);
+  background: rgba(16,185,129,.1);
+  color: #059669;
+}
+.dark .rule-actions .btn-apply {
+  border-color: rgba(16,185,129,.25);
+  background: rgba(16,185,129,.06);
+  color: #6ee7b7;
+}
+.rule-actions .btn-delete {
+  border-color: rgba(239,68,68,.4);
+  background: rgba(239,68,68,.1);
+  color: #dc2626;
+}
+.dark .rule-actions .btn-delete {
+  border-color: rgba(239,68,68,.25);
+  background: rgba(239,68,68,.06);
+  color: #fca5a5;
+}
+.rule-actions .btn-move {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #94a3b8;
+  padding: 1px 4px;
+  font-size: 9px;
+}
+.dark .rule-actions .btn-move {
+  border-color: #334155;
+  background: #1e293b;
+  color: #64748b;
+}
+.rule-actions button:hover { filter: brightness(0.92); }
+
+.proposal-label {
+  font-weight: 700;
+  font-size: 12px;
+  color: #6d28d9;
+}
+.dark .proposal-label { color: #c4b5fd; }
+.proposal-summary {
+  color: #64748b;
+  font-size: 10px;
+  margin-top: 2px;
+}
+.dark .proposal-summary { color: #94a3b8; }
+.proposal-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+.proposal-actions button {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.proposal-actions .btn-approve {
+  border-color: rgba(16,185,129,.4);
+  background: rgba(16,185,129,.1);
+  color: #059669;
+}
+.dark .proposal-actions .btn-approve {
+  border-color: rgba(16,185,129,.25);
+  background: rgba(16,185,129,.06);
+  color: #6ee7b7;
+}
+.proposal-actions .btn-edit {
+  border-color: rgba(139,92,246,.4);
+  background: rgba(139,92,246,.1);
+  color: #7c3aed;
+}
+.dark .proposal-actions .btn-edit {
+  border-color: rgba(139,92,246,.25);
+  background: rgba(139,92,246,.06);
+  color: #c4b5fd;
+}
+.proposal-actions .btn-reject {
+  border-color: rgba(239,68,68,.4);
+  background: rgba(239,68,68,.1);
+  color: #dc2626;
+}
+.dark .proposal-actions .btn-reject {
+  border-color: rgba(239,68,68,.25);
+  background: rgba(239,68,68,.06);
+  color: #fca5a5;
+}
+.proposal-detail {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(139,92,246,.15);
+}
+.dark .proposal-detail { border-top-color: rgba(139,92,246,.1); }
+.proposal-rationale, .proposal-downside {
+  font-size: 10px;
+  color: #64748b;
+  margin-top: 2px;
+}
+.dark .proposal-rationale, .proposal-downside { color: #94a3b8; }
+.proposal-evidence {
+  font-size: 10px;
+  color: #94a3b8;
+  margin-top: 2px;
+  max-height: 40px;
+  overflow-y: auto;
+}
+
+.wiki-kind {
+  display: inline-block;
+  width: 14px;
+  text-align: center;
+  font-size: 10px;
+}
+.wiki-summary {
+  color: #64748b;
+  font-size: 10px;
+  flex: 1;
+}
+.dark .wiki-summary { color: #94a3b8; }
+.wiki-meta {
+  color: #94a3b8;
+  font-size: 9px;
+  margin-top: 1px;
+}
+.wiki-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+.wiki-actions button {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.wiki-actions .btn-create {
+  border-color: rgba(139,92,246,.4);
+  background: rgba(139,92,246,.1);
+  color: #7c3aed;
+}
+.dark .wiki-actions .btn-create {
+  border-color: rgba(139,92,246,.25);
+  background: rgba(139,92,246,.06);
+  color: #c4b5fd;
+}
+.wiki-actions .btn-dismiss {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #94a3b8;
+}
+.dark .wiki-actions .btn-dismiss {
+  border-color: #334155;
+  background: #1e293b;
+  color: #64748b;
+}
+
+/* Badge for pending proposals */
+.rw-badge {
+  display: inline-flex;
+  align-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font-size: 9px;
+  font-weight: 800;
+  background: rgba(239,68,68,.15);
+  color: #dc2626;
+}
+.dark .rw-badge {
+  background: rgba(239,68,68,.2);
+  color: #fca5a5;
+}
+
+/* Editor */
+#editorContent {
+  font-family: "SF Mono", "Fira Code", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  line-height: 1.6;
+  tab-size: 2;
+}
+#editorErrors .error-line {
+  display: block;
+}
+
+/* Section collapse animation */
+#rulesWikiBody {
+  transition: opacity 0.2s ease;
+}

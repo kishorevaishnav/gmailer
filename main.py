@@ -237,16 +237,37 @@ class RuleCreateRequest(BaseModel):
     enabled: bool = True
 
 
-class RuleToggleRequest(BaseModel):
-    enabled: bool
+class RuleUpsertRequest(BaseModel):
+    markdown: str | None = None
+    enabled: bool | None = None
+    precedence: int | None = None
 
 
 class RuleReorderRequest(BaseModel):
     rule_ids: list[int]
 
 
+class RuleMoveRequest(BaseModel):
+    direction: str
+
+
 class RuleConvertRequest(BaseModel):
     rule_id: int
+
+
+class ProposalApproveRequest(BaseModel):
+    skill_md: str | None = None
+    apply_now: bool = False
+
+
+class ProposalCreateRequest(BaseModel):
+    source: str = "wiki"
+    label: str
+    summary: str | None = None
+    rationale: str | None = None
+    downside: str | None = None
+    proposed_skill_md: str
+    observation_id: int | None = None
 
 
 @app.get("/api/rules")
@@ -270,11 +291,36 @@ def api_rules_create(req: RuleCreateRequest):
 
 
 @app.patch("/api/rules/{rule_id}")
-def api_rule_toggle(rule_id: int, req: RuleToggleRequest):
+def api_rule_update(rule_id: int, req: RuleUpsertRequest):
+    existing = store.get_rule(rule_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="rule not found")
+    updates: dict = {}
+    if req.markdown is not None:
+        md = req.markdown.strip()
+        if not md:
+            raise HTTPException(status_code=400, detail="markdown required")
+        try:
+            parsed = parse_skill_md(md)
+        except RuleParseError as exc:
+            raise HTTPException(status_code=400, detail={"errors": exc.errors})
+        updates["skill_md"] = md
+        updates["parsed_json"] = json.dumps(parsed, sort_keys=True)
+    if req.enabled is not None:
+        updates["enabled"] = 1 if req.enabled else 0
+    if req.precedence is not None:
+        updates["precedence"] = req.precedence
+    if updates:
+        store.update_rule(rule_id, **updates)
+    return store.get_rule(rule_id)
+
+
+@app.post("/api/rules/{rule_id}/move")
+def api_rule_move(rule_id: int, req: RuleMoveRequest):
     if store.get_rule(rule_id) is None:
         raise HTTPException(status_code=404, detail="rule not found")
-    store.update_rule(rule_id, enabled=req.enabled)
-    return store.get_rule(rule_id)
+    store.move_rule(rule_id, 1 if req.direction == "down" else -1)
+    return {"ok": True}
 
 
 @app.delete("/api/rules/{rule_id}")
@@ -300,6 +346,51 @@ def api_rule_apply_now(rule_id: int):
     _kept, _t, _s, _k, rule_stats = _apply_rules(service, items)
     stats = rule_stats.get(rule_id, {"trash": 0, "star": 0, "skip": 0})
     return {"ok": True, "rule_id": rule_id, "matched": sum(stats.values()), **stats}
+
+
+@app.post("/api/proposals")
+def api_proposals_create(req: ProposalCreateRequest):
+    try:
+        parsed = parse_skill_md(req.proposed_skill_md)
+    except RuleParseError as exc:
+        raise HTTPException(status_code=400, detail={"errors": exc.errors})
+    pid = store.add_proposal(
+        source=req.source,
+        label=req.label,
+        summary=req.summary,
+        rationale=req.rationale,
+        downside=req.downside,
+        evidence_json="[]",
+        proposed_skill_md=req.proposed_skill_md,
+        observation_id=req.observation_id,
+    )
+    return store.get_proposal(pid)
+
+
+@app.post("/api/proposals/{proposal_id}/approve")
+def api_proposal_approve(proposal_id: int, req: ProposalApproveRequest = ProposalApproveRequest()):
+    prop = store.get_proposal(proposal_id)
+    if prop is None:
+        raise HTTPException(status_code=404, detail="proposal not found")
+    if prop["status"] != "pending":
+        raise HTTPException(status_code=409, detail="proposal already reviewed")
+    md = (req.skill_md or prop["proposed_skill_md"]).strip()
+    try:
+        parsed = parse_skill_md(md)
+    except RuleParseError as exc:
+        raise HTTPException(status_code=400, detail={"errors": exc.errors})
+    rid = store.add_rule(md, json.dumps(parsed, sort_keys=True))
+    if prop.get("observation_id"):
+        store.mark_observation_converted(prop["observation_id"], rid)
+    store.approve_proposal(proposal_id, rid)
+    result = {"ok": True, "rule": store.get_rule(rid), "proposal": store.get_proposal(proposal_id)}
+    if req.apply_now:
+        service = require_service()
+        items, _bundles, _nxt = _run(queue_module.build_queue, service, config.DEFAULT_BATCH, None)
+        _kept, _t, _s, _k, rule_stats = _apply_rules(service, items)
+        stats = rule_stats.get(rid, {"trash": 0, "star": 0, "skip": 0})
+        result["applied"] = {"matched": sum(stats.values()), **stats}
+    return result
 
 
 # --- Traces (raw evidence log) -------------------------------------------------
@@ -340,24 +431,6 @@ def api_wiki_observation_convert(obs_id: int, req: RuleConvertRequest):
 @app.get("/api/proposals")
 def api_proposals(status: str = "pending"):
     return {"items": store.list_proposals(status or "pending")}
-
-
-@app.post("/api/proposals/{proposal_id}/approve")
-def api_proposal_approve(proposal_id: int):
-    prop = store.get_proposal(proposal_id)
-    if prop is None:
-        raise HTTPException(status_code=404, detail="proposal not found")
-    if prop["status"] != "pending":
-        raise HTTPException(status_code=409, detail="proposal already reviewed")
-    try:
-        parsed = parse_skill_md(prop["proposed_skill_md"])
-    except RuleParseError as exc:
-        raise HTTPException(status_code=400, detail={"errors": exc.errors})
-    rid = store.add_rule(prop["proposed_skill_md"], json.dumps(parsed, sort_keys=True))
-    if prop.get("observation_id"):
-        store.mark_observation_converted(prop["observation_id"], rid)
-    store.approve_proposal(proposal_id, rid)
-    return {"ok": True, "rule": store.get_rule(rid), "proposal": store.get_proposal(proposal_id)}
 
 
 @app.post("/api/proposals/{proposal_id}/reject")

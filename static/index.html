@@ -5,8 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Gmailer — Inbox Triage</title>
   <script>
-    // Apply theme before paint to avoid a flash of the wrong theme.
-    // Default is dark; "light" opts into light; "apple" gets the Apple-like look.
     (function () {
       try {
         var q = new URLSearchParams(window.location.search).get("theme");
@@ -93,17 +91,10 @@
         <button id="skippedBtn" class="mt-2 hidden rounded-lg border border-slate-300 px-2 py-1 text-[11px] text-slate-600 transition hover:border-violet-500/60 hover:text-violet-700 dark:border-slate-700 dark:text-slate-300 dark:hover:text-violet-300">
           Skipped: <span id="skippedCount">0</span> · bring back
         </button>
-        <button id="blockedBtn" class="mt-1 hidden rounded-lg border border-red-500/40 px-2 py-1 text-[11px] text-red-600 transition hover:border-red-500/70 hover:text-red-500 dark:border-red-500/30 dark:text-red-300 dark:hover:text-red-200">
-          Blocked: <span id="blockedCount">0</span> senders · manage
-        </button>
-        <ul id="blockedList" class="mt-2 hidden space-y-1"></ul>
-        <button id="promoBlockedBtn" class="mt-1 hidden rounded-lg border border-amber-500/40 px-2 py-1 text-[11px] text-amber-700 transition hover:border-amber-500/70 hover:text-amber-600 dark:border-amber-500/30 dark:text-amber-300 dark:hover:text-amber-200">
-          Promo auto-delete: <span id="promoBlockedCount">0</span> vendors · manage
-        </button>
-        <ul id="promoBlockedList" class="mt-2 hidden space-y-1"></ul>
+        <ul id="skippedList" class="mt-2 hidden space-y-1"></ul>
       </div>
 
-      <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-800 max-h-[46%] overflow-y-auto">
+      <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-800 max-h-[36%] overflow-y-auto">
         <div class="flex items-center justify-between mb-3">
           <span class="text-[11px] font-bold uppercase tracking-widest text-slate-600 dark:text-slate-500">Groups</span>
           <span id="groupsCount" class="text-[10px] text-slate-500 dark:text-slate-600"></span>
@@ -123,8 +114,26 @@
         </div>
       </div>
 
-      <div class="px-5 py-4 border-t border-slate-200 dark:border-slate-800">
-        <div class="text-[11px] font-bold uppercase tracking-widest text-slate-600 dark:text-slate-500 mb-3">Recent Actions</div>
+      <div id="rulesWikiSection" class="px-5 py-4 border-t border-slate-200 dark:border-slate-800">
+        <div id="rulesWikiToggle" class="flex items-center justify-between mb-3 cursor-pointer select-none">
+          <span class="text-[11px] font-bold uppercase tracking-widest text-slate-600 dark:text-slate-500">Rules &amp; Wiki</span>
+          <div class="flex items-center gap-1.5">
+            <span id="rulesBadge" class="hidden rounded-full bg-red-500/15 px-1.5 py-0.5 text-[9px] font-bold text-red-700 dark:text-red-300">0</span>
+            <span id="rulesWikiChevron" class="text-[10px] text-slate-400 dark:text-slate-500 transition-transform">▾</span>
+          </div>
+        </div>
+        <div id="rulesWikiBody" class="space-y-3">
+          <div id="proposalsList" class="space-y-1.5 hidden"></div>
+          <ul id="rulesList" class="space-y-1.5"></ul>
+          <div id="wikiList" class="space-y-1.5 hidden"></div>
+          <button id="newRuleBtn" class="w-full rounded-lg border border-dashed border-slate-300 dark:border-slate-700 px-3 py-2 text-[11px] font-bold text-slate-500 dark:text-slate-400 transition hover:border-violet-500/40 hover:text-violet-600 dark:hover:text-violet-400">
+            + New Rule
+          </button>
+        </div>
+      </div>
+
+      <div class="px-5 py-4 border-t border-slate-200 dark:border-slate-800 mt-auto">
+        <div class="text-[11px] font-bold uppercase tracking-widest text-slate-600 dark:text-slate-500 mb-3">RecentActions</div>
         <div id="historyList" class="space-y-2"></div>
       </div>
     </aside>
@@ -152,28 +161,42 @@
       </header>
 
       <div id="viewport" class="flex-1 min-h-0 flex flex-col px-6 sm:px-10 py-5 gap-4 overflow-hidden">
-        <div id="groupHeader" class="hidden shrink-0 rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-3">
-        <div class="flex items-center gap-3">
-          <h2 id="groupTitle" class="text-sm font-bold text-violet-800 dark:text-violet-100 flex-1 truncate"></h2>
-          <span id="groupCount" class="text-xs text-violet-700 dark:text-violet-300"></span>
-          <button id="bulkDeleteBtn" class="rounded-lg bg-red-500/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-500 transition">Delete all (background)</button>
-          <button id="bulkArchiveBtn" class="rounded-lg bg-emerald-500/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 transition">Archive all (background)</button>
-        </div>
-        <div id="groupOverview" class="mt-1.5 text-xs text-violet-800/80 dark:text-violet-100/80"></div>
-      </div>
-        <div id="emailCards" class="flex-1 min-h-0 overflow-y-auto space-y-3"></div>
-      </div>
 
-      <footer class="shrink-0 h-12 flex items-center gap-2 px-5 border-t border-slate-200 bg-white/70 dark:border-slate-800 dark:bg-slate-900/40 overflow-x-auto">
-        <span class="key"><b class="k red">D</b> Delete</span>
-        <span class="key"><b class="k green">E/A</b> Archive</span>
-        <span class="key"><b class="k amber">S</b> Star</span>
-        <span class="key"><b class="k violet">X</b> Skip for now</span>
-        <span class="key"><b class="k red">B</b> Block sender</span>
-        <span class="key"><b class="k amber">P</b> Promo auto-delete</span>
-        <span class="key"><b class="k slate">← →</b> Switch group</span>
-        <span class="key"><b class="k violet">U</b> Undo</span>
-      </footer>
+        <!-- Normal view (group view) -->
+        <div id="normalView" class="flex-1 min-h-0 flex flex-col">
+          <div id="groupHeader" class="shrink-0 rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-3">
+            <div class="flex items-center gap-3">
+              <h2 id="groupTitle" class="text-sm font-bold text-violet-800 dark:text-violet-100 flex-1 truncate"></h2>
+              <span id="groupCount" class="text-xs text-violet-700 dark:text-violet-300"></span>
+              <button id="bulkDeleteBtn" class="rounded-lg bg-red-500/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-500 transition">Delete all (background)</button>
+              <button id="bulkArchiveBtn" class="rounded-lg bg-emerald-500/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 transition">Archive all (background)</button>
+            </div>
+            <div id="groupOverview" class="mt-1.5 text-xs text-violet-800/80 dark:text-violet-100/80"></div>
+          </div>
+          <div id="emailCards" class="flex-1 min-h-0 overflow-y-auto space-y-3"></div>
+        </div>
+
+        <!-- Editor view (replaces normal view) -->
+        <div id="editorView" class="hidden flex-1 flex flex-col min-h-0">
+          <header class="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-slate-200 dark:border-slate-800">
+            <span id="editorTitle" class="text-sm font-bold text-slate-800 dark:text-slate-200 truncate max-w-xs">New Rule</span>
+            <label class="flex items-center gap-1.5 text-[11px] text-slate-600 dark:text-slate-400 cursor-pointer ml-2">
+              <input id="editorApplyNow" type="checkbox" class="accent-violet-600 rounded"> Apply now
+            </label>
+            <div class="ml-auto flex items-center gap-2">
+              <button id="editorCancel" class="rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:border-slate-400 transition">Cancel</button>
+              <button id="editorSave" class="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-violet-700 transition">Save</button>
+              <button id="editorDelete" class="hidden rounded-lg bg-red-500/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-600 transition">Delete</button>
+            </div>
+          </header>
+          <div class="flex-1 min-h-0 flex">
+            <div class="flex-1 p-6 overflow-auto">
+              <pre id="editorErrors" class="hidden mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-[11px] text-red-700 dark:text-red-300 font-mono whitespace-pre-wrap"></pre>
+              <textarea id="editorContent" class="w-full h-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 text-[13px] font-mono text-slate-800 dark:text-slate-200 resize-none focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500/30" spellcheck="false"></textarea>
+            </div>
+          </div>
+        </div>
+      </div>
     </main>
   </div>
 
