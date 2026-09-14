@@ -29,6 +29,7 @@ const state = {
   searchResults: null,    // null = group view; array = search results view
   viewMode: (() => { try { return localStorage.getItem("gmailer-view-mode") || "senders"; } catch (e) { return "senders"; } })(),
   activeCatGroup: null,   // selected category in categories view mode
+  activeThreadId: null,   // selected thread in threads view mode
   nextPageToken: null,    // Gmail pagination token for "load next batch"
   activeGroupKey: null,    // "singles" | bundle_key | null
   expandedCardId: null,    // currently inline-expanded email id
@@ -56,7 +57,7 @@ const el = {
   remainCount: $("remainCount"), remainSub: $("remainSub"),
   progressFill: $("progressFill"), queueMeta: $("queueMeta"),
   historyList: $("historyList"),
-  groupList: $("groupList"), groupsCount: $("groupsCount"), viewSendersBtn: $("viewSendersBtn"), viewCatsBtn: $("viewCatsBtn"),
+  groupList: $("groupList"), groupsCount: $("groupsCount"), viewSendersBtn: $("viewSendersBtn"), viewCatsBtn: $("viewCatsBtn"), viewThreadsBtn: $("viewThreadsBtn"),
   cacheInfo: $("cacheInfo"),
   skippedBtn: $("skippedBtn"), skippedCount: $("skippedCount"), skippedRestoreBtn: $("skippedRestoreBtn"),
   skipForNowBtn: $("skipForNowBtn"),
@@ -413,23 +414,34 @@ async function renderAll(initial = false) {
       const top = topCategory();
       if (top) { selectCategoryGroup(top); return; }
     }
+    if (state.viewMode === "threads") {
+      const ts = threads();
+      if (ts.length) { selectThread(ts[0].tid); return; }
+    }
     const picked = pickDefaultGroup();
     if (picked) { selectGroup(picked); return; }
   }
   renderSidebar();
-  if (state.viewMode === "categories" && !state.searchResults) renderCategoryGroupView();
+  if (state.searchResults) renderGroupView();
+  else if (state.viewMode === "categories") renderCategoryGroupView();
+  else if (state.viewMode === "threads") renderThreadView();
   else renderGroupView();
 }
 
 function setViewMode(mode) {
-  state.viewMode = mode === "categories" ? "categories" : "senders";
+  state.viewMode = mode === "categories" ? "categories" : mode === "threads" ? "threads" : "senders";
   try { localStorage.setItem("gmailer-view-mode", state.viewMode); } catch (e) {}
   state.expandedCardId = null;
   if (state.viewMode === "categories" && !state.activeCatGroup) {
     state.activeCatGroup = topCategory();
   }
+  if (state.viewMode === "threads" && !state.activeThreadId) {
+    const ts = threads();
+    if (ts.length) state.activeThreadId = ts[0].tid;
+  }
   renderSidebar();
   if (state.viewMode === "categories") renderCategoryGroupView();
+  else if (state.viewMode === "threads") renderThreadView();
   else renderGroupView();
 }
 
@@ -454,6 +466,9 @@ function renderSidebar() {
     el.positionTotal.textContent = `${state.searchResults.length} matches`;
   } else if (state.viewMode === "categories") {
     el.position.textContent = state.activeCatGroup ? `Category: ${state.activeCatGroup}` : "No category selected";
+    el.positionTotal.textContent = `${state.visibleEmails.length} shown`;
+  } else if (state.viewMode === "threads") {
+    el.position.textContent = state.activeThreadId ? "Thread" : "No thread selected";
     el.positionTotal.textContent = `${state.visibleEmails.length} shown`;
   } else if (state.activeGroupKey === null) {
     el.position.textContent = "No group selected";
@@ -672,13 +687,86 @@ function categoryCounts() {
 function paintViewToggle() {
   const on = "bg-violet-500/20 text-violet-700 dark:text-violet-300";
   const off = "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200";
-  if (el.viewSendersBtn) el.viewSendersBtn.className = `rounded-md px-2 py-1 text-[10px] font-bold transition ${state.viewMode === "categories" ? off : on}`;
-  if (el.viewCatsBtn) el.viewCatsBtn.className = `rounded-md px-2 py-1 text-[10px] font-bold transition ${state.viewMode === "categories" ? on : off}`;
+  const cls = (active) => `rounded-md px-2 py-1 text-[10px] font-bold transition ${active ? on : off}`;
+  if (el.viewSendersBtn) el.viewSendersBtn.className = cls(state.viewMode === "senders");
+  if (el.viewCatsBtn) el.viewCatsBtn.className = cls(state.viewMode === "categories");
+  if (el.viewThreadsBtn) el.viewThreadsBtn.className = cls(state.viewMode === "threads");
+}
+
+function threads() {
+  const map = new Map();
+  for (const it of state.queue) {
+    const tid = it.thread_id || it.id;
+    if (!map.has(tid)) map.set(tid, []);
+    map.get(tid).push(it);
+  }
+  const list = [...map.entries()].map(([tid, items]) => {
+    items.sort((a, b) => (a.internal_date_ms || 0) - (b.internal_date_ms || 0));
+    const latest = items[items.length - 1];
+    const names = [...new Set(items.map((x) => x.sender_name || x.sender_email || "?"))];
+    return {
+      tid, items, latest, names,
+      lastMs: latest.internal_date_ms || 0,
+      subject: latest.subject || "(no subject)",
+    };
+  });
+  list.sort((a, b) => b.lastMs - a.lastMs);
+  return list;
+}
+
+function renderThreadRows() {
+  const ts = threads();
+  el.groupsCount.textContent = ts.length
+    ? `${ts.length} thread${ts.length === 1 ? "" : "s"}` : "";
+  state.groupsSig = JSON.stringify(ts.map((t) => [t.tid, t.items.map((i) => i.id).join(",")]));
+  el.groupList.innerHTML = ts.length ? ts.map((t) => {
+    const active = state.activeThreadId === t.tid;
+    const when = t.lastMs ? timeAgo(new Date(t.lastMs).toISOString()) : "";
+    return `
+    <li class="rounded-lg border ${active ? "border-violet-500/60 bg-violet-500/10" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60"} px-3 py-2 cursor-pointer select-none transition hover:bg-slate-100 dark:hover:bg-slate-800/70" data-thread="${esc(t.tid)}">
+      <div class="flex items-center gap-2">
+        <p class="min-w-0 flex-1 ${active ? "text-violet-800 dark:text-violet-200" : "text-slate-800 dark:text-slate-200"}">
+          <span class="block truncate text-[13px] font-semibold">${esc(t.subject)}</span>
+          <span class="block truncate text-[10px] text-slate-500 dark:text-slate-400">${esc(t.names.slice(0, 3).join(", "))}${t.names.length > 3 ? ` +${t.names.length - 3} more` : ""}</span>
+        </p>
+        <span class="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">${t.items.length}</span>
+      </div>
+      <div class="mt-0.5 flex items-center gap-2">
+        <p class="min-w-0 flex-1 truncate text-[11px] text-slate-500 dark:text-slate-500">${esc(t.latest.snippet || t.latest.preview || "")}</p>
+        ${when ? `<span class="shrink-0 text-[10px] text-slate-400 dark:text-slate-600">${esc(when)}</span>` : ""}
+      </div>
+    </li>`;
+  }).join("") : `<li class="text-xs text-slate-500 dark:text-slate-600">No threads yet.</li>`;
+}
+
+function selectThread(tid) {
+  state.activeThreadId = tid;
+  state.expandedCardId = null;
+  renderSidebar();
+  renderThreadView();
+}
+
+function renderThreadView() {
+  const t = threads().find((x) => x.tid === state.activeThreadId);
+  el.groupHeader.classList.toggle("hidden", !t);
+  if (!t) {
+    state.visibleEmails = [];
+    el.emailCards.innerHTML = `<p class="text-sm text-slate-500 dark:text-slate-600 p-6">Pick a thread on the left.</p>`;
+    return;
+  }
+  state.visibleEmails = t.items;
+  el.groupTitle.textContent = t.subject;
+  el.groupCount.textContent = `${t.items.length} message${t.items.length === 1 ? "" : "s"}`;
+  el.groupOverview.textContent = t.names.join(" · ");
+  el.bulkDeleteBtn.classList.add("hidden");
+  el.bulkArchiveBtn.classList.add("hidden");
+  el.emailCards.innerHTML = t.items.map(emailCard).join("");
 }
 
 function renderGroups() {
   paintViewToggle();
   if (state.viewMode === "categories") return renderCategoryRows();
+  if (state.viewMode === "threads") return renderThreadRows();
   const groups = currentGroups();
   el.groupsCount.textContent = groups.length
     ? `${groups.length} sender${groups.length === 1 ? "" : "s"}` : "";
@@ -724,15 +812,60 @@ function renderCategoryGroupView() {
     el.emailCards.innerHTML = `<p class="text-sm text-slate-500 dark:text-slate-600 p-6">Pick a category on the left.</p>`;
     return;
   }
-  state.visibleEmails = state.queue.filter((it) => (emailCategory(it) || "Uncategorized") === cat);
-  el.groupTitle.textContent = cat;
-  el.groupCount.textContent = `${state.visibleEmails.length} email${state.visibleEmails.length === 1 ? "" : "s"}`;
-  el.groupOverview.textContent = `Every “${cat}” email in this batch.`;
+  const emails = state.queue.filter((it) => (emailCategory(it) || "Uncategorized") === cat);
+  state.visibleEmails = emails;
   el.bulkDeleteBtn.classList.add("hidden");
   el.bulkArchiveBtn.classList.add("hidden");
-  el.emailCards.innerHTML = state.visibleEmails.length
-    ? state.visibleEmails.map(emailCard).join("")
-    : `<p class="text-sm text-slate-500 dark:text-slate-600 p-6">No emails in this category right now.</p>`;
+  if (!emails.length) {
+    el.groupTitle.textContent = cat;
+    el.groupCount.textContent = "0 emails";
+    el.groupOverview.textContent = `Every “${cat}” email in this batch.`;
+    el.emailCards.innerHTML = `<p class="text-sm text-slate-500 dark:text-slate-600 p-6">No emails in this category right now.</p>`;
+    return;
+  }
+  const senders = new Map();
+  for (const it of emails) {
+    const key = it.bundle_key || it.sender_email || it.sender_name || "unknown";
+    if (!senders.has(key)) {
+      senders.set(key, {
+        label: it.bundle_sender_name || it.sender_name || it.sender_email || key,
+        domain: ((it.sender_email || "").split("@")[1] || "").toLowerCase(),
+        items: [],
+      });
+    }
+    senders.get(key).items.push(it);
+  }
+  const groups = [...senders.values()].map((g) => {
+    const tmap = new Map();
+    for (const it of g.items) {
+      const tid = it.thread_id || it.id;
+      if (!tmap.has(tid)) tmap.set(tid, []);
+      tmap.get(tid).push(it);
+    }
+    const threadList = [...tmap.values()].map((items) => {
+      items.sort((a, b) => (a.internal_date_ms || 0) - (b.internal_date_ms || 0));
+      return { items, lastMs: items[items.length - 1].internal_date_ms || 0 };
+    }).sort((a, b) => b.lastMs - a.lastMs);
+    return { ...g, threads: threadList, lastMs: Math.max(...threadList.map((t) => t.lastMs)) };
+  }).sort((a, b) => b.lastMs - a.lastMs);
+
+  el.groupTitle.textContent = cat;
+  el.groupCount.textContent = `${emails.length} email${emails.length === 1 ? "" : "s"}`;
+  el.groupOverview.textContent = `${groups.length} sender${groups.length === 1 ? "" : "s"} · newest first`;
+  el.emailCards.innerHTML = groups.map((g) => `
+    <div class="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+      <div class="flex items-center gap-2 px-3 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60">
+        <span class="min-w-0 flex-1 truncate text-[13px] font-bold text-slate-800 dark:text-slate-200">${esc(g.label)}</span>
+        ${g.domain ? `<span class="shrink-0 rounded-md bg-sky-500/15 px-1.5 py-px font-mono text-[10px] font-bold text-sky-700 dark:text-sky-300">@${esc(g.domain)}</span>` : ""}
+        <span class="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">${g.items.length}</span>
+      </div>
+      <div class="p-2 space-y-2">
+        ${g.threads.map((t) => `
+          ${(t.items.length > 1 || g.threads.length > 1) ? `<div class="px-1 pt-1 text-[11px] font-semibold text-slate-500 dark:text-slate-400 truncate">${esc(t.items[t.items.length - 1].subject || "(no subject)")} · ${t.items.length} message${t.items.length === 1 ? "" : "s"}</div>` : ""}
+          ${t.items.map(emailCard).join("")}
+        `).join("")}
+      </div>
+    </div>`).join("");
 }
 
 function groupRow(g) {
@@ -1062,6 +1195,7 @@ function refreshMainView() {
   if (state.searchResults) renderSearchView();
   else if (state.queue.length === 0) showEmpty();
   else if (state.viewMode === "categories") renderCategoryGroupView();
+  else if (state.viewMode === "threads") renderThreadView();
   else renderGroupView();
 }
 
@@ -1650,6 +1784,14 @@ function groupKeys() {
   return keys;
 }
 function stepGroup(dir) {
+  if (state.viewMode === "threads") {
+    const ts = threads();
+    if (!ts.length) { toast("No threads to switch", "info", { duration: 1600 }); return; }
+    const tids = ts.map((t) => t.tid);
+    const idx = tids.indexOf(state.activeThreadId);
+    selectThread(tids[((idx + dir) % tids.length + tids.length) % tids.length]);
+    return;
+  }
   if (state.viewMode === "categories") {
     const cats = categoryCounts().map(([c]) => c);
     if (!cats.length) { toast("No categories to switch", "info", { duration: 1600 }); return; }
@@ -1740,6 +1882,8 @@ applyThemeUI();
 el.bulkDeleteBtn.addEventListener("click", () => { if (state.activeGroupKey && state.activeGroupKey !== "singles") queueBulk("trash", state.activeGroupKey); else toast("Open a group to bulk delete", "info", { duration: 1600 }); });
 el.bulkArchiveBtn.addEventListener("click", () => { if (state.activeGroupKey && state.activeGroupKey !== "singles") queueBulk("archive", state.activeGroupKey); else toast("Open a group to bulk archive", "info", { duration: 1600 }); });
 el.groupList.addEventListener("click", (e) => {
+  const th = e.target.closest("[data-thread]");
+  if (th) { selectThread(th.dataset.thread); return; }
   const c = e.target.closest("[data-catgroup]");
   if (c) { selectCategoryGroup(c.dataset.catgroup); return; }
   const t = e.target.closest("[data-group]");
@@ -1747,6 +1891,7 @@ el.groupList.addEventListener("click", (e) => {
 });
 el.viewSendersBtn.addEventListener("click", () => setViewMode("senders"));
 el.viewCatsBtn.addEventListener("click", () => setViewMode("categories"));
+el.viewThreadsBtn.addEventListener("click", () => setViewMode("threads"));
 
 if (el.searchInput) {
   el.searchInput.addEventListener("input", () => {
