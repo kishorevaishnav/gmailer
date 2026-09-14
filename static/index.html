@@ -81,7 +81,7 @@
       </header>
 
       <div class="px-5 py-5 border-b border-slate-200 dark:border-slate-800">
-        <div id="remainCount" class="text-6xl font-black tabular-nums leading-none tracking-tight">—</div>
+        <div id="remainCount" class="text-3xl font-black tabular-nums leading-none tracking-tight">—</div>
         <div id="remainSub" class="mt-1 text-sm text-slate-600 dark:text-slate-400">emails left</div>
         <div class="mt-3 h-1.5 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
           <div id="progressFill" class="h-full w-0 rounded-full bg-gradient-to-r from-red-500 to-rose-400 transition-all duration-300"></div>
@@ -96,40 +96,16 @@
 
       <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-800 max-h-[36%] overflow-y-auto">
         <div class="flex items-center justify-between mb-3">
-          <span class="text-[11px] font-bold uppercase tracking-widest text-slate-600 dark:text-slate-500">Groups</span>
-          <span id="groupsCount" class="text-[10px] text-slate-500 dark:text-slate-600"></span>
-        </div>
-        <ul id="groupList" class="space-y-2"></ul>
-      </div>
-
-      <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-800">
-        <div class="flex items-center justify-between mb-3">
-          <span class="text-[11px] font-bold uppercase tracking-widest text-slate-600 dark:text-slate-500">Categories</span>
-          <span id="categoriesCount" class="text-[10px] text-slate-500 dark:text-slate-600"></span>
-        </div>
-        <div id="categoryChips" class="flex flex-wrap gap-1.5 mb-2"></div>
-        <div class="flex gap-1">
-          <input id="categoryInput" type="text" placeholder="Add custom category…" class="flex-1 min-w-0 rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1 text-[11px] text-slate-800 dark:text-slate-200 placeholder:text-slate-400">
-          <button id="categoryAddBtn" class="rounded bg-violet-500/15 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-500/30 transition">Add</button>
-        </div>
-      </div>
-
-      <div id="rulesWikiSection" class="px-5 py-4 border-t border-slate-200 dark:border-slate-800">
-        <div id="rulesWikiToggle" class="flex items-center justify-between mb-3 cursor-pointer select-none">
-          <span class="text-[11px] font-bold uppercase tracking-widest text-slate-600 dark:text-slate-500">Rules &amp; Wiki</span>
-          <div class="flex items-center gap-1.5">
-            <span id="rulesBadge" class="hidden rounded-full bg-red-500/15 px-1.5 py-0.5 text-[9px] font-bold text-red-700 dark:text-red-300">0</span>
-            <span id="rulesWikiChevron" class="text-[10px] text-slate-400 dark:text-slate-500 transition-transform">▾</span>
+          <div class="flex items-center gap-1">
+            <button id="viewSendersBtn" class="rounded-md px-2 py-1 text-[10px] font-bold transition" title="Group emails by sender">Senders</button>
+            <button id="viewCatsBtn" class="rounded-md px-2 py-1 text-[10px] font-bold transition" title="Group emails by category">Categories</button>
+          </div>
+          <div class="flex items-center gap-1">
+            <span id="groupsCount" class="text-[10px] text-slate-500 dark:text-slate-600"></span>
+            <button id="remapCatsBtn" class="text-[11px] font-bold text-slate-400 hover:text-violet-500 dark:hover:text-violet-300 transition" title="Re-run categorization on cached emails">↻</button>
           </div>
         </div>
-        <div id="rulesWikiBody" class="space-y-3">
-          <div id="proposalsList" class="space-y-1.5 hidden"></div>
-          <ul id="rulesList" class="space-y-1.5"></ul>
-          <div id="wikiList" class="space-y-1.5 hidden"></div>
-          <button id="newRuleBtn" class="w-full rounded-lg border border-dashed border-slate-300 dark:border-slate-700 px-3 py-2 text-[11px] font-bold text-slate-500 dark:text-slate-400 transition hover:border-violet-500/40 hover:text-violet-600 dark:hover:text-violet-400">
-            + New Rule
-          </button>
-        </div>
+        <ul id="groupList" class="space-y-2"></ul>
       </div>
 
       <div class="px-5 py-4 border-t border-slate-200 dark:border-slate-800 mt-auto">
@@ -230,5 +206,6 @@
   </div>
 
   <script src="/static/app.js"></script>
+  <script src="/static/dev-reload.js"></script>
 </body>
 </html>

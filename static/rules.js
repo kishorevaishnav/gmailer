@@ -67,13 +67,31 @@ function setTab(name) {
   });
 }
 
+function senderList(p) {
+  if (!p.sender) return [];
+  return Array.isArray(p.sender) ? p.sender : [p.sender];
+}
+
+function isSenderOnly(p) {
+  return senderList(p).length > 0 && !(p.subject && p.subject.length)
+    && !(p.category && p.category.length) && !p.emails_per_day;
+}
+
 function matchSummary(p) {
   const parts = [];
-  if (p.sender) parts.push("from " + p.sender);
+  const senders = senderList(p);
+  if (senders.length === 1) parts.push("from " + senders[0]);
+  else if (senders.length > 1) parts.push(`from ${senders.length} senders`);
   if (p.subject && p.subject.length) parts.push("subj: " + p.subject.join(", "));
   if (p.category && p.category.length) parts.push("cat: " + p.category.join(", "));
   if (p.emails_per_day) parts.push("≥" + p.emails_per_day + "/day");
   return parts.join(" · ") || "matches everything";
+}
+
+function senderChips(p, ruleId) {
+  if (!isSenderOnly(p)) return "";
+  return `<div class="mt-1.5 flex flex-wrap gap-1">${senderList(p).map((s) => `
+    <span class="inline-flex items-center gap-1 rounded-md bg-slate-500/10 px-1.5 py-0.5 font-mono text-[10px] text-slate-600 dark:text-slate-300">${esc(s)}<button data-act="rmsender" data-id="${ruleId}" data-sender="${esc(s)}" class="font-bold text-slate-400 hover:text-red-500" title="Remove this sender from the rule">×</button></span>`).join("")}</div>`;
 }
 
 function renderAll() {
@@ -81,8 +99,12 @@ function renderAll() {
   el.propBadge.textContent = state.proposals.length ? `(${state.proposals.length})` : "";
 
   el.rulesEmpty.classList.toggle("hidden", state.rules.length > 0);
-  el.rulesList.innerHTML = state.rules.map((r, i) => {
+  const groups = [["trash", "Trash"], ["star", "Star"], ["skip", "Skip"]];
+  const ung = state.rules.filter((r) => !groups.some(([a]) => (r.parsed && r.parsed.action) === a));
+  let pos = 0;
+  const card = (r) => {
     const p = r.parsed || {};
+    const i = pos++;
     return `<li draggable="true" data-id="${r.id}" class="rule-row rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-3 cursor-grab">
       <div class="flex items-center gap-2">
         <span class="text-[10px] font-mono text-slate-400 w-5">${i + 1}</span>
@@ -95,6 +117,7 @@ function renderAll() {
         <button data-act="down" data-id="${r.id}" class="rounded border border-slate-300 dark:border-slate-700 px-1.5 py-0.5 text-[10px]" title="Move down">▼</button>
         <button data-act="toggle" data-id="${r.id}" class="rounded border px-2 py-0.5 text-[10px] font-bold ${r.enabled ? "border-emerald-500/50 text-emerald-700 dark:text-emerald-300" : "border-slate-300 dark:border-slate-700 text-slate-400"}" title="${r.enabled ? "Disable" : "Enable"}">${r.enabled ? "ON" : "OFF"}</button>
       </div>
+      ${senderChips(p, r.id)}
       <div class="mt-2 flex items-center gap-1.5 flex-wrap">
         <button data-act="edit" data-id="${r.id}" class="rounded bg-violet-500/15 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300">Edit</button>
         <button data-act="apply" data-id="${r.id}" class="rounded bg-emerald-500/15 px-2 py-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">Apply now</button>
@@ -104,7 +127,13 @@ function renderAll() {
       </div>
       <div id="traces-${r.id}" class="hidden mt-2 border-t border-slate-200 dark:border-slate-800 pt-2 text-[11px] text-slate-500"></div>
     </li>`;
-  }).join("");
+  };
+  el.rulesList.innerHTML = groups.map(([action, label]) => {
+    const group = state.rules.filter((r) => r.parsed && r.parsed.action === action);
+    if (!group.length) return "";
+    return `<li class="text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 pt-2">${label} · ${group.length}</li>`
+      + group.map(card).join("");
+  }).join("") + ung.map(card).join("");
   enableDrag();
 
   el.propsEmpty.classList.toggle("hidden", state.proposals.length > 0);
@@ -156,7 +185,7 @@ function enableDrag() {
 
 function fillForm(parsed) {
   el.fName.value = parsed.name || "";
-  el.fSender.value = parsed.sender || "";
+  el.fSender.value = Array.isArray(parsed.sender) ? JSON.stringify(parsed.sender) : (parsed.sender || "");
   el.fAction.value = parsed.action || "trash";
   el.fScope.value = parsed.scope || "all_mail";
   el.fSubject.value = (parsed.subject || []).join(", ");
@@ -311,6 +340,14 @@ document.addEventListener("click", async (e) => {
       await api(`/api/rules/${id}`, { method: "DELETE" }).catch((err) => toast(err.message, "err"));
       if (state.editingId === id) newRule();
       await loadAll(false);
+    }
+    else if (act === "rmsender") {
+      const sender = b.dataset.sender;
+      try {
+        await api(`/api/rules/${id}/senders/remove`, { method: "POST", body: JSON.stringify({ sender }) });
+        toast(`Removed ${sender} from rule`, "info");
+        await loadAll(false);
+      } catch (err) { toast(`Remove failed: ${err.message}`, "err"); }
     }
     else if (act === "apply") {
       try {

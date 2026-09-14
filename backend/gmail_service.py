@@ -125,6 +125,9 @@ class GmailClient:
     def get_full(self, message_id: str) -> dict:
         return self._request("GET", f"/messages/{message_id}", params=[("format", "full")])
 
+    def get_attachment(self, message_id: str, attachment_id: str) -> dict:
+        return self._request("GET", f"/messages/{message_id}/attachments/{attachment_id}")
+
     def get_profile(self) -> dict:
         return self._request("GET", "/profile")
 
@@ -332,6 +335,30 @@ def _extract_text(payload: dict) -> str:
     return combined.strip(" \t\n")
 
 
+def extract_attachments(payload: dict) -> list[dict]:
+    """Attachment descriptors (filename/mime/size/attachmentId), recursively."""
+    found: list[dict] = []
+
+    def walk(parts: list[dict]) -> None:
+        for p in parts or []:
+            filename = p.get("filename") or ""
+            body = p.get("body", {}) or {}
+            if filename and body.get("attachmentId"):
+                found.append({
+                    "filename": filename,
+                    "mimeType": p.get("mimeType", "") or "application/octet-stream",
+                    "size": int(body.get("size", 0) or 0),
+                    "attachmentId": body["attachmentId"],
+                })
+            if p.get("parts"):
+                walk(p["parts"])
+
+    if (payload.get("filename") or "") and (payload.get("body", {}) or {}).get("attachmentId"):
+        walk([payload])
+    walk(payload.get("parts", []))
+    return found
+
+
 def get_full(client: GmailClient, message_id: str) -> dict:
     """Full message for rendering (body text + payload for the AI layer)."""
     raw = client.get_full(message_id)
@@ -356,6 +383,7 @@ def get_full(client: GmailClient, message_id: str) -> dict:
         "promo": _is_promo_label(raw.get("labelIds", [])),
         "body_text": body_text,
         "body_truncated": truncated,
+        "attachments": extract_attachments(payload),
     }
 
 
@@ -391,6 +419,16 @@ def star(client: GmailClient, message_id: str) -> None:
 
 def unstar(client: GmailClient, message_id: str) -> None:
     _call(lambda: client.modify(message_id, remove=["STARRED"]))
+
+
+def get_attachment(client: GmailClient, message_id: str, attachment_id: str) -> dict:
+    result = {}
+
+    def fetch():
+        result.update(client.get_attachment(message_id, attachment_id))
+
+    _call(fetch)
+    return result
 
 
 

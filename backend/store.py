@@ -19,7 +19,8 @@ import threading
 import time
 
 from . import config
-from .rules import parse_skill_md, parsed_json, rule_md_for_sender
+from .rules import normalize_sender, parse_skill_md, parsed_json, render_skill_md, rule_md_for_sender
+from .rules import sender_entry_matches
 
 logger = logging.getLogger("gmailer.store")
 
@@ -40,7 +41,8 @@ CREATE TABLE IF NOT EXISTS messages (
     body_truncated  INTEGER DEFAULT 0,
     summary         TEXT,
     category        TEXT,
-    fetched_at      REAL
+    fetched_at      REAL,
+    attachments     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS categories (
@@ -167,6 +169,10 @@ def _get() -> sqlite3.Connection:
         except (sqlite3.OperationalError, sqlite3.ProgrammingError):
             pass  # column already present (new schema or a prior run)
         try:
+            _conn.execute("ALTER TABLE messages ADD COLUMN attachments TEXT")
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError):
+            pass
+        try:
             _conn.execute("ALTER TABLE rule_proposals ADD COLUMN observation_id INTEGER")
         except (sqlite3.OperationalError, sqlite3.ProgrammingError):
             pass  # column already present (new schema or a prior run)
@@ -202,6 +208,9 @@ def save_message(msg: dict, summary: dict | None = None) -> None:
         return
     summary = summary if summary is not None else msg.get("summary")
     labels = msg.get("label_ids") or []
+    attachments = msg.get("attachments")
+    if not isinstance(attachments, list):
+        attachments = None
     category = msg.get("category")
     if not category and isinstance(summary, dict):
         category = summary.get("category")
@@ -211,21 +220,22 @@ def save_message(msg: dict, summary: dict | None = None) -> None:
                 """INSERT INTO messages
                    (id, sender_name, sender_email, subject, snippet,
                     internal_date_ms, label_ids, promo, body_text,
-                    body_truncated, summary, category, fetched_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-                   ON CONFLICT(id) DO UPDATE SET
-                     sender_name=excluded.sender_name,
-                     sender_email=excluded.sender_email,
-                     subject=excluded.subject,
-                     snippet=excluded.snippet,
-                     internal_date_ms=excluded.internal_date_ms,
-                     label_ids=excluded.label_ids,
-                     promo=excluded.promo,
-                     body_text=excluded.body_text,
-                     body_truncated=excluded.body_truncated,
-                     summary=excluded.summary,
-                     category=excluded.category,
-                     fetched_at=excluded.fetched_at""",
+                    body_truncated, summary, category, fetched_at, attachments)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(id) DO UPDATE SET
+                      sender_name=excluded.sender_name,
+                      sender_email=excluded.sender_email,
+                      subject=excluded.subject,
+                      snippet=excluded.snippet,
+                      internal_date_ms=excluded.internal_date_ms,
+                      label_ids=excluded.label_ids,
+                      promo=excluded.promo,
+                      body_text=excluded.body_text,
+                      body_truncated=excluded.body_truncated,
+                      summary=excluded.summary,
+                      category=excluded.category,
+                      fetched_at=excluded.fetched_at,
+                      attachments=COALESCE(excluded.attachments, attachments)""",
                 (
                     mid,
                     msg.get("sender_name"),
@@ -240,6 +250,7 @@ def save_message(msg: dict, summary: dict | None = None) -> None:
                     json.dumps(summary, ensure_ascii=False) if summary else None,
                     category if category else None,
                     time.time(),
+                    json.dumps(attachments, ensure_ascii=False) if attachments is not None else None,
                 ),
             )
             _get().commit()
@@ -260,12 +271,20 @@ def _message_row_to_dict(row) -> dict:
         "body_text": row["body_text"] or "",
         "body_truncated": bool(row["body_truncated"]),
         "category": row["category"],
+        "attachments": [],
     }
     if row["summary"]:
         try:
             msg["summary"] = json.loads(row["summary"])
         except (json.JSONDecodeError, TypeError):
             pass
+    try:
+        if row["attachments"]:
+            parsed_atts = json.loads(row["attachments"])
+            if isinstance(parsed_atts, list):
+                msg["attachments"] = parsed_atts
+    except (json.JSONDecodeError, TypeError, IndexError):
+        pass
     return msg
 
 
@@ -324,6 +343,37 @@ def list_messages(limit: int = 500, offset: int = 0) -> list[dict]:
     for row in rows:
         out.append(_message_row_to_dict(row))
     return out
+
+
+def save_attachments(message_id: str, attachments: list[dict]) -> None:
+    try:
+        with _lock:
+            _get().execute("UPDATE messages SET attachments = ? WHERE id = ?",
+                           (json.dumps(attachments or [], ensure_ascii=False), message_id))
+            _get().commit()
+    except Exception as exc:
+        logger.warning("store.save_attachments failed: %s", exc)
+
+
+def count_missing_attachments() -> int:
+    try:
+        with _lock:
+            row = _get().execute("SELECT COUNT(*) FROM messages WHERE attachments IS NULL").fetchone()
+        return int(row[0]) if row else 0
+    except Exception:
+        return 0
+
+
+def ids_missing_attachments(limit: int = 5000) -> list[str]:
+    try:
+        with _lock:
+            rows = _get().execute(
+                "SELECT id FROM messages WHERE attachments IS NULL LIMIT ?", (int(limit),)
+            ).fetchall()
+        return [str(r["id"]) for r in rows]
+    except Exception as exc:
+        logger.warning("store.ids_missing_attachments failed: %s", exc)
+        return []
 
 
 def load_summary(message_id: str) -> dict | None:
@@ -829,6 +879,80 @@ def delete_rule(rule_id: int) -> None:
     with _lock:
         _get().execute("DELETE FROM rules WHERE id = ?", (rule_id,))
         _get().commit()
+
+
+def _rule_senders(parsed: dict) -> list[str]:
+    senders = parsed.get("sender") or []
+    if isinstance(senders, str):
+        senders = [senders]
+    return [str(s) for s in senders]
+
+
+def _sender_only(parsed: dict) -> bool:
+    return bool(_rule_senders(parsed)) and not parsed.get("subject") \
+        and not parsed.get("category") and not parsed.get("emails_per_day")
+
+
+def find_append_target(action: str, scope: str) -> dict | None:
+    scope = scope or "all_mail"
+    for r in list_rules():
+        p = r["parsed"]
+        if p.get("action") != action:
+            continue
+        if (p.get("scope") or "all_mail") != scope:
+            continue
+        if _sender_only(p):
+            return r
+    return None
+
+
+def append_rule_sender(rule_id: int, sender: str) -> dict | None:
+    r = get_rule(rule_id)
+    if r is None:
+        return None
+    senders = _rule_senders(r["parsed"])
+    s = normalize_sender(sender)
+    if any(x.lower() == s.lower() for x in senders):
+        return r
+    p = dict(r["parsed"])
+    p["sender"] = senders + [s]
+    md = render_skill_md(p, r["enabled"])
+    update_rule(rule_id, skill_md=md, parsed_json=parsed_json(parse_skill_md(md)))
+    return get_rule(rule_id)
+
+
+def remove_rule_sender(rule_id: int, sender: str) -> dict | None:
+    r = get_rule(rule_id)
+    if r is None:
+        return None
+    senders = _rule_senders(r["parsed"])
+    kept = [x for x in senders if x.lower() != (sender or "").strip().lower()]
+    if len(kept) == len(senders):
+        return None
+    if not kept:
+        raise ValueError("cannot remove the last sender — delete the rule instead")
+    p = dict(r["parsed"])
+    p["sender"] = kept
+    md = render_skill_md(p, r["enabled"])
+    update_rule(rule_id, skill_md=md, parsed_json=parsed_json(parse_skill_md(md)))
+    return get_rule(rule_id)
+
+
+def rule_covers_sender(action: str, scope: str, email: str, name: str = "") -> bool:
+    scope = scope or "all_mail"
+    email = (email or "").strip().lower()
+    if not email:
+        return False
+    for r in list_rules():
+        p = r["parsed"]
+        if p.get("action") != action:
+            continue
+        rscope = p.get("scope") or "all_mail"
+        if rscope != scope and not (scope == "promo_only" and rscope == "all_mail"):
+            continue
+        if any(sender_entry_matches(s, email, name or "") for s in _rule_senders(p)):
+            return True
+    return False
 
 
 def reorder_rules(rule_ids: list[int]) -> None:

@@ -51,7 +51,7 @@ def test_propose_rule_uses_llm_and_persists():
     p = store.get_proposal(prop["id"])
     assert p["rationale"] == "You trash all promos"
     md = parse_skill_md(p["proposed_skill_md"])
-    assert md["sender"] == "a@b.com" and md["scope"] == "promo_only" and md["action"] == "trash"
+    assert md["sender"] == ["a@b.com"] and md["scope"] == "promo_only" and md["action"] == "trash"
 
 
 def test_propose_rule_skips_duplicate():

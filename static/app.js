@@ -25,10 +25,11 @@ const state = {
   pendingTodoId: null,    // email awaiting due-date confirmation in the modal
   searchQuery: "",        // active search text ("" = no search)
   searchResults: null,    // null = group view; array = search results view
+  viewMode: (() => { try { return localStorage.getItem("gmailer-view-mode") || "senders"; } catch (e) { return "senders"; } })(),
+  activeCatGroup: null,   // selected category in categories view mode
   nextPageToken: null,    // Gmail pagination token for "load next batch"
   activeGroupKey: null,    // "singles" | bundle_key | null
   expandedCardId: null,    // currently inline-expanded email id
-  activeCategory: "all",   // category filter
   categories: [],          // allowed category names from /api/categories
   pendingOps: [],          // [{id, action, groupKey, label, count, status, ts}] background bulk ops
   visibleEmails: [],       // emails currently shown in the middle pane (group view)
@@ -53,12 +54,11 @@ const el = {
   remainCount: $("remainCount"), remainSub: $("remainSub"),
   progressFill: $("progressFill"), queueMeta: $("queueMeta"),
   historyList: $("historyList"),
-  groupList: $("groupList"), groupsCount: $("groupsCount"),
+  groupList: $("groupList"), groupsCount: $("groupsCount"), viewSendersBtn: $("viewSendersBtn"), viewCatsBtn: $("viewCatsBtn"),
   cacheInfo: $("cacheInfo"),
   skippedBtn: $("skippedBtn"), skippedCount: $("skippedCount"), skippedRestoreBtn: $("skippedRestoreBtn"),
   skipForNowBtn: $("skipForNowBtn"),
-  rulesWikiToggle: $("rulesWikiToggle"), rulesWikiBody: $("rulesWikiBody"), rulesWikiChevron: $("rulesWikiChevron"),
-  rulesBadge: $("rulesBadge"), proposalsList: $("proposalsList"), rulesList: $("rulesList"), wikiList: $("wikiList"), newRuleBtn: $("newRuleBtn"),
+
   loadMoreBtn: $("loadMoreBtn"),
   userChip: $("userChip"), logoutBtn: $("logoutBtn"),
   themeBtn: $("themeBtn"), themeIconMoon: $("themeIconMoon"), themeIconSun: $("themeIconSun"), themeIconApple: $("themeIconApple"),
@@ -67,7 +67,7 @@ const el = {
   todoModal: $("todoModal"), todoModalSub: $("todoModalSub"), todoDueInput: $("todoDueInput"), todoModalCancel: $("todoModalCancel"), todoModalSave: $("todoModalSave"),
   toasts: $("toasts"),
   emptyScreen: $("emptyScreen"), emptyStat: $("emptyStat"), emptyReload: $("emptyReload"),
-  groupHeader: $("groupHeader"), groupTitle: $("groupTitle"), groupCount: $("groupCount"), groupOverview: $("groupOverview"), bulkDeleteBtn: $("bulkDeleteBtn"), bulkArchiveBtn: $("bulkArchiveBtn"), emailCards: $("emailCards"), categoryChips: $("categoryChips"), categoryInput: $("categoryInput"), categoryAddBtn: $("categoryAddBtn"), categoriesCount: $("categoriesCount"),
+  groupHeader: $("groupHeader"), groupTitle: $("groupTitle"), groupCount: $("groupCount"), groupOverview: $("groupOverview"), bulkDeleteBtn: $("bulkDeleteBtn"), bulkArchiveBtn: $("bulkArchiveBtn"), emailCards: $("emailCards"), remapCatsBtn: $("remapCatsBtn"),
   normalView: $("normalView"), editorView: $("editorView"), editorTitle: $("editorTitle"), editorContent: $("editorContent"), editorErrors: $("editorErrors"), editorSave: $("editorSave"), editorCancel: $("editorCancel"), editorDelete: $("editorDelete"), editorApplyNow: $("editorApplyNow"),
 };
 
@@ -244,7 +244,6 @@ async function init() {
     state.authenticated = true;
     state.email = status.email;
     el.userChip.textContent = state.email || "";
-    loadCategories();
     await loadQueue();
   } catch (e) {
     showAuth({ credentials_found: true });
@@ -366,10 +365,7 @@ function pumpDetail(d) {
     if (d.preview) it.preview = d.preview;
   }
   const visibleIds = new Set((state.visibleEmails || []).map((x) => x.id));
-  if (state.expandedCardId === d.id || visibleIds.has(d.id)) {
-    if (state.searchResults) renderSearchView();
-    else renderGroupView();
-  }
+  if (state.expandedCardId === d.id || visibleIds.has(d.id)) refreshMainView();
 }
 
 /* Summarize ungrouped ("singles") emails in the background so their
@@ -410,12 +406,33 @@ function bumpSingleSummarize() {
 async function renderAll(initial = false) {
   if (initial && !state.autoSelectedOnce) {
     state.autoSelectedOnce = true;
+    if (state.viewMode === "categories") {
+      const top = topCategory();
+      if (top) { selectCategoryGroup(top); return; }
+    }
     const picked = pickDefaultGroup();
     if (picked) { selectGroup(picked); return; }
   }
   renderSidebar();
-  renderGroupView();
-  renderCategoryChips();
+  if (state.viewMode === "categories" && !state.searchResults) renderCategoryGroupView();
+  else renderGroupView();
+}
+
+function setViewMode(mode) {
+  state.viewMode = mode === "categories" ? "categories" : "senders";
+  try { localStorage.setItem("gmailer-view-mode", state.viewMode); } catch (e) {}
+  state.expandedCardId = null;
+  if (state.viewMode === "categories" && !state.activeCatGroup) {
+    state.activeCatGroup = topCategory();
+  }
+  renderSidebar();
+  if (state.viewMode === "categories") renderCategoryGroupView();
+  else renderGroupView();
+}
+
+function topCategory() {
+  const counts = categoryCounts();
+  return counts.length ? counts[0][0] : null;
 }
 
 /* ───────────────────────────── Sidebar ─────────────────────────── */
@@ -432,6 +449,9 @@ function renderSidebar() {
   if (state.searchResults) {
     el.position.textContent = "Search";
     el.positionTotal.textContent = `${state.searchResults.length} matches`;
+  } else if (state.viewMode === "categories") {
+    el.position.textContent = state.activeCatGroup ? `Category: ${state.activeCatGroup}` : "No category selected";
+    el.positionTotal.textContent = `${state.visibleEmails.length} shown`;
   } else if (state.activeGroupKey === null) {
     el.position.textContent = "No group selected";
     el.positionTotal.textContent = `${state.queue.length} in batch`;
@@ -461,121 +481,6 @@ function renderSidebar() {
 
   renderPendingOps();
   renderGroups();
-  renderCategoryChips();
-  renderRulesWiki();
-}
-
-function renderRulesWiki() {
-  if (state.rulesWikiCollapsed) {
-    el.rulesWikiBody.classList.add("hidden");
-    el.rulesWikiChevron.textContent = "▸";
-  } else {
-    el.rulesWikiBody.classList.remove("hidden");
-    el.rulesWikiChevron.textContent = "▾";
-  }
-  el.rulesWikiToggle.onclick = () => {
-    state.rulesWikiCollapsed = !state.rulesWikiCollapsed;
-    renderRulesWiki();
-  };
-
-  // Badge = pending proposals
-  const pending = state.proposals.filter((p) => p.status === "pending").length;
-  if (pending > 0) {
-    el.rulesBadge.textContent = pending;
-    el.rulesBadge.classList.remove("hidden");
-  } else {
-    el.rulesBadge.classList.add("hidden");
-  }
-
-  // Proposals
-  const proposals = state.proposals.filter((p) => p.status === "pending");
-  if (proposals.length) {
-    el.proposalsList.classList.remove("hidden");
-    el.proposalsList.innerHTML = proposals.map((p) => `
-      <div class="proposal-card">
-        <div class="flex items-center gap-1.5">
-          <span class="proposal-label">${esc(p.label)}</span>
-        </div>
-        <p class="proposal-summary">${esc(p.summary || "")}</p>
-        <div class="rule-actions">
-          <button data-propose="approve" data-id="${p.id}" class="btn-approve">Approve</button>
-          <button data-propose="edit" data-id="${p.id}" class="btn-edit">Edit skill</button>
-          <button data-propose="reject" data-id="${p.id}" class="btn-reject">Reject</button>
-        </div>
-        <div class="proposal-detail" id="proposal-detail-${p.id}">
-          ${p.rationale ? `<p class="proposal-rationale"><b>Why:</b> ${esc(p.rationale)}</p>` : ""}
-          ${p.downside ? `<p class="proposal-downside"><b>Risk:</b> ${esc(p.downside)}</p>` : ""}
-          ${p.evidence_json ? `<details class="proposal-evidence"><summary>Evidence</summary><pre style="margin:4px 0 0;font-size:9px;white-space:pre-wrap;">${esc(p.evidence_json)}</pre></details>` : ""}
-        </div>
-      </div>
-    `).join("");
-  } else {
-    el.proposalsList.classList.add("hidden");
-    el.proposalsList.innerHTML = "";
-  }
-
-  // Rules
-  if (state.rules.length) {
-    el.rulesList.classList.remove("hidden");
-    el.rulesList.innerHTML = state.rules.map((r) => {
-      const counts = r.parsed ? getRuleCounts(r.id) : { trash: 0, star: 0, skip: 0 };
-      const total = counts.trash + counts.star + counts.skip;
-      const actionLabel = r.parsed ? r.parsed.action : "?";
-      const name = r.parsed ? r.parsed.name : "Untitled";
-      return `
-        <li class="rule-card" data-rule-id="${r.id}">
-          <div class="flex items-center gap-2">
-            <span class="rule-name flex-1">${esc(name)}</span>
-            <span class="rule-meta">${actionLabel}${total > 0 ? ` · ${total}` : ""}</span>
-            <span class="flex items-center gap-0.5">
-              <button data-rule-move="up" data-id="${r.id}" class="btn-move" title="Move up">▲</button>
-              <button data-rule-move="down" data-id="${r.id}" class="btn-move" title="Move down">▼</button>
-            </span>
-            <button data-rule-toggle="${r.enabled ? 'on' : 'off'}" data-id="${r.id}" class="btn-toggle" title="${r.enabled ? 'Disable' : 'Enable'}">${r.enabled ? "●" : "○"}</button>
-          </div>
-          <div class="rule-actions">
-            <button data-rule-edit="${r.id}" class="btn-edit">Edit skill</button>
-            <button data-rule-apply="${r.id}" class="btn-apply">Apply now</button>
-            <button data-rule-delete="${r.id}" class="btn-delete">Delete</button>
-          </div>
-        </li>
-      `;
-    }).join("");
-  } else {
-    el.rulesList.classList.add("hidden");
-    el.rulesList.innerHTML = "";
-  }
-
-  // Wiki observations
-  if (state.wikiObservations.length) {
-    el.wikiList.classList.remove("hidden");
-    el.wikiList.innerHTML = state.wikiObservations.map((w) => {
-      const kindIcon = { sender: "⊕", keyword: "⊞", category: "◇", frequency: "∿" }[w.kind] || "?";
-      const status = w.status === "dismissed" ? "dismissed" : w.status === "converted" ? "converted" : "open";
-      return `
-        <div class="wiki-card">
-          <div class="flex items-center gap-1">
-            <span class="wiki-kind">${kindIcon}</span>
-            <span class="wiki-summary">${esc(w.summary || w.target)}</span>
-            <span class="text-[9px] text-slate-400 dark:text-slate-500">${status}</span>
-          </div>
-          <div class="wiki-meta">${esc(w.kind)} · signal ${(w.signal || 0).toFixed(2)} · ${w.evidence_count || 0} evidence</div>
-          <div class="wiki-actions">
-            <button data-wiki-create="${w.id}" class="btn-create">Create rule</button>
-            <button data-wiki-dismiss="${w.id}" class="btn-dismiss">Dismiss</button>
-          </div>
-        </div>
-      `;
-    }).join("");
-  } else {
-    el.wikiList.classList.add("hidden");
-    el.wikiList.innerHTML = "";
-  }
-}
-
-function getRuleCounts(ruleId) {
-  // Computed from traces; fall back to empty counts if not available
-  return { trash: 0, star: 0, skip: 0 };
 }
 
 function renderHistory() {
@@ -625,76 +530,22 @@ function scheduleOpRemoval(op) {
   }, 8000);
 }
 
-/* ───────────────────────────── Categories ─────────────────────── */
-function normalizeCategoryList(data) {
-  const list = Array.isArray(data) ? data : (data && data.items) || (data && data.categories) || [];
-  return [...new Set(list.map(String).filter(Boolean))];
-}
-
-async function loadCategories() {
+/* ───────────────────────────── Category remap ──────────────────── */
+async function remapCategories() {
+  if (!el.remapCatsBtn || el.remapCatsBtn.disabled) return;
+  el.remapCatsBtn.disabled = true;
+  el.remapCatsBtn.classList.add("opacity-50");
+  toast("Re-evaluating categories…", "info", { duration: 2000 });
   try {
-    const data = await api("/api/categories", { method: "GET" });
-    state.categories = normalizeCategoryList(data);
-    renderCategoryChips();
-  } catch (e) { /* already toasted by api(); keep state.categories as-is */ }
-}
-
-function renderCategoryChips() {
-  const countFor = (cat) => state.queue.filter((it) => emailCategory(it) === cat).length;
-  const chipCls = (active) =>
-    `rounded-lg border px-2 py-1 text-[10px] font-bold transition cursor-pointer select-none flex items-center gap-1 ` +
-    (active
-      ? `border-violet-500/60 bg-violet-500/10 text-violet-800 dark:text-violet-200`
-      : `border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-300 dark:hover:bg-slate-800/70`);
-
-  let html = `
-    <button type="button" data-cat="all" class="${chipCls(state.activeCategory === "all")}">
-      All <span class="text-[10px] opacity-70">${state.queue.length}</span>
-    </button>`;
-
-  for (const cat of state.categories) {
-    const n = countFor(cat);
-    html += `
-      <button type="button" data-cat="${esc(cat)}" class="${chipCls(state.activeCategory === cat)}">
-        <span class="truncate max-w-[140px]">${esc(cat)}</span>
-        <span class="text-[10px] opacity-70">${n}</span>
-        <span data-catremove="${esc(cat)}" class="ml-0.5 rounded px-0.5 text-[11px] leading-none text-slate-400 hover:text-red-500 hover:bg-red-500/10" title="Remove category">×</span>
-      </button>`;
+    const res = await api("/api/categories/remap", { method: "POST", body: "{}" });
+    toast(`Remapped ${res.scanned} emails · ${res.changed} changed`, "ok", { duration: 3000 });
+  } catch (e) {
+    toast(`Remap failed: ${e.message}`, "err", { duration: 4000 });
+  } finally {
+    el.remapCatsBtn.disabled = false;
+    el.remapCatsBtn.classList.remove("opacity-50");
   }
-
-  el.categoryChips.innerHTML = html;
-  el.categoriesCount.textContent = state.categories.length;
-}
-
-async function addCategory() {
-  const name = el.categoryInput.value.trim();
-  if (!name) return;
-  try {
-    const data = await api("/api/categories/add", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-    state.categories = normalizeCategoryList(data);
-    el.categoryInput.value = "";
-    toast("Category added", "ok", { duration: 1800 });
-    renderCategoryChips();
-  } catch (e) { /* api() already toasted */ }
-}
-
-async function removeCategory(name) {
-  try {
-    const data = await api("/api/categories/remove", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-    state.categories = normalizeCategoryList(data);
-    if (state.activeCategory === name) state.activeCategory = "all";
-    renderCategoryChips();
-    renderGroupView();
-    toast(`Removed category: ${name}`, "info", { duration: 2000 });
-  } catch (e) { /* api() already toasted */ }
+  await loadQueue();
 }
 
 /* ───────────────────────────── Groups ──────────────────────────── */
@@ -728,7 +579,25 @@ function pickDefaultGroup() {
   return g ? g.key : null;
 }
 
+function categoryCounts() {
+  const m = new Map();
+  for (const it of state.queue) {
+    const c = emailCategory(it) || "Uncategorized";
+    m.set(c, (m.get(c) || 0) + 1);
+  }
+  return [...m.entries()].sort((a, b) => b[1] - a[1]);
+}
+
+function paintViewToggle() {
+  const on = "bg-violet-500/20 text-violet-700 dark:text-violet-300";
+  const off = "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200";
+  if (el.viewSendersBtn) el.viewSendersBtn.className = `rounded-md px-2 py-1 text-[10px] font-bold transition ${state.viewMode === "categories" ? off : on}`;
+  if (el.viewCatsBtn) el.viewCatsBtn.className = `rounded-md px-2 py-1 text-[10px] font-bold transition ${state.viewMode === "categories" ? on : off}`;
+}
+
 function renderGroups() {
+  paintViewToggle();
+  if (state.viewMode === "categories") return renderCategoryRows();
   const groups = currentGroups();
   el.groupsCount.textContent = groups.length
     ? `${groups.length} sender${groups.length === 1 ? "" : "s"}` : "";
@@ -742,6 +611,47 @@ function renderGroups() {
   rows += groups.map(groupRow).join("");
   if (!rows) rows = `<li class="text-xs text-slate-500 dark:text-slate-600">No repeat senders yet.</li>`;
   el.groupList.innerHTML = rows;
+}
+
+function renderCategoryRows() {
+  const counts = categoryCounts();
+  el.groupsCount.textContent = counts.length
+    ? `${counts.length} ${counts.length === 1 ? "category" : "categories"}` : "";
+  state.groupsSig = JSON.stringify(counts);
+  el.groupList.innerHTML = counts.length ? counts.map(([cat, n]) => {
+    const active = state.activeCatGroup === cat;
+    return `
+    <li class="rounded-lg border ${active ? "border-violet-500/60 bg-violet-500/10" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60"} px-3 py-2 flex items-center gap-2 cursor-pointer select-none transition hover:bg-slate-100 dark:hover:bg-slate-800/70" data-catgroup="${esc(cat)}">
+      <p class="min-w-0 flex-1 text-[13px] font-semibold ${active ? "text-violet-800 dark:text-violet-200" : "text-slate-800 dark:text-slate-200"} truncate">${esc(cat)}</p>
+      <span class="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">${n}</span>
+    </li>`;
+  }).join("") : `<li class="text-xs text-slate-500 dark:text-slate-600">No categorized emails yet.</li>`;
+}
+
+function selectCategoryGroup(cat) {
+  state.activeCatGroup = cat;
+  state.expandedCardId = null;
+  renderSidebar();
+  renderCategoryGroupView();
+}
+
+function renderCategoryGroupView() {
+  const cat = state.activeCatGroup;
+  el.groupHeader.classList.toggle("hidden", !cat);
+  if (!cat) {
+    state.visibleEmails = [];
+    el.emailCards.innerHTML = `<p class="text-sm text-slate-500 dark:text-slate-600 p-6">Pick a category on the left.</p>`;
+    return;
+  }
+  state.visibleEmails = state.queue.filter((it) => (emailCategory(it) || "Uncategorized") === cat);
+  el.groupTitle.textContent = cat;
+  el.groupCount.textContent = `${state.visibleEmails.length} email${state.visibleEmails.length === 1 ? "" : "s"}`;
+  el.groupOverview.textContent = `Every “${cat}” email in this batch.`;
+  el.bulkDeleteBtn.classList.add("hidden");
+  el.bulkArchiveBtn.classList.add("hidden");
+  el.emailCards.innerHTML = state.visibleEmails.length
+    ? state.visibleEmails.map(emailCard).join("")
+    : `<p class="text-sm text-slate-500 dark:text-slate-600 p-6">No emails in this category right now.</p>`;
 }
 
 function groupRow(g) {
@@ -892,10 +802,7 @@ function renderGroupView() {
     const g = currentGroups().find((x) => x.key === key);
     if (g && !state.groupCache.has(key)) fetchGroup(key, g);
   }
-  let visible = state.visibleEmails;
-  if (state.activeCategory !== "all") {
-    visible = visible.filter((it) => emailCategory(it) === state.activeCategory);
-  }
+  const visible = state.visibleEmails;
   const first = key === "singles" ? null : state.queue.find((i) => i.bundle_key === key);
   const gs = key !== "singles" ? state.groupCache.get(key) : null;
   let overview = "";
@@ -921,7 +828,7 @@ function renderGroupView() {
   el.groupOverview.textContent = overview;
   el.emailCards.innerHTML = visible.length
     ? visible.map(emailCard).join("")
-    : `<p class="text-sm text-slate-500 dark:text-slate-600 p-6">${state.activeCategory !== "all" ? "No emails match this category." : "This group is empty now."}</p>`;
+    : `<p class="text-sm text-slate-500 dark:text-slate-600 p-6">This group is empty now.</p>`;
 
   if (key === "singles") {
     scheduleSingleSummarize(visible.filter((it) => !(it.summary && it.summary.one_liner)).slice(0, 30).map((it) => it.id));
@@ -956,6 +863,8 @@ function emailCard(it) {
   const todoBadge = isTodo
     ? `<span class="shrink-0 rounded bg-sky-500/15 px-1.5 py-0.5 text-[9px] font-bold text-sky-700 dark:text-sky-300">TODO</span>` : "";
   const inQueue = state.queue.some((x) => x.id === it.id);
+  const domain = ((it.sender_email || "").split("@")[1] || "").toLowerCase();
+  const attCount = ((it.attachments) || []).length;
 
   let summaryHTML;
   if (sum.one_liner) {
@@ -995,6 +904,11 @@ function emailCard(it) {
         ${categoryChip} ${promoBadge} ${todoBadge}
         <p class="min-w-0 flex-1 text-sm font-bold text-slate-800 dark:text-slate-200 truncate">${esc(it.subject || "(no subject)")}</p>
       </div>
+      <div class="flex items-center gap-1.5 text-[11px] min-w-0 cursor-pointer" data-expand="${esc(it.id)}">
+        <span class="truncate font-semibold text-slate-600 dark:text-slate-300">${esc(sender)}</span>
+        ${domain ? `<span class="shrink-0 rounded-md bg-sky-500/15 px-1.5 py-px font-mono text-[10px] font-bold text-sky-700 dark:text-sky-300" title="${esc(it.sender_email || "")}">@${esc(domain)}</span>` : ""}
+        ${attCount ? `<span class="shrink-0 rounded-md bg-violet-500/15 px-1.5 py-px text-[10px] font-bold text-violet-700 dark:text-violet-300" title="${attCount} attachment${attCount === 1 ? "" : "s"} — expand to download">📎${attCount}</span>` : ""}
+      </div>
       ${summaryHTML}
       ${previewHTML}
       ${badgesHTML}
@@ -1006,9 +920,19 @@ function emailCard(it) {
     </div>`;
 }
 
+function fmtSize(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1048576) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1048576).toFixed(1)} MB`;
+}
+
 function detailHTML(it) {
   const d = state.detail.get(it.id);
   if (!d) fetchDetail(it.id);
+  const atts = ((d && d.attachments) || it.attachments || []);
+  const attHTML = atts.length ? `<div class="mt-2 flex items-center gap-1.5 flex-wrap">${atts.map((a) => `
+    <a href="/api/messages/${esc(it.id)}/attachments/${esc(a.attachmentId)}" target="_blank" rel="noopener noreferrer" class="rounded-lg bg-violet-500/15 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-500/30 transition" title="${esc(a.mimeType || "file")} · ${fmtSize(a.size)} — click to download">📎 ${esc(a.filename || "attachment")}</a>`).join("")}</div>` : "";
   const sum = (d && d.summary) || null;
   const sender = (d && d.sender_email) || it.sender_email || "";
   const dateMs = (d && d.internal_date_ms) || it.internal_date_ms;
@@ -1033,6 +957,7 @@ function detailHTML(it) {
         ${tokenPill(sum)}
       </div>
       ${sumBlock}
+      ${attHTML}
       ${bodyHTML}
       <div class="mt-2 flex items-center gap-1.5">
         <button data-cardact="ruleBlock" data-id="${esc(it.id)}" class="rounded bg-red-500/15 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition">Block sender</button>
@@ -1050,6 +975,7 @@ function refreshMainView() {
   renderSidebar();
   if (state.searchResults) renderSearchView();
   else if (state.queue.length === 0) showEmpty();
+  else if (state.viewMode === "categories") renderCategoryGroupView();
   else renderGroupView();
 }
 
@@ -1331,7 +1257,7 @@ async function issueRuleBlock(id) {
   const md = ruleMdForSender(email, name, false);
   try {
     const res = await api("/api/rules", { method: "POST", body: JSON.stringify({ markdown: md }) });
-    toast(`Blocked ${name} — rule created`, "ok", { duration: 2800 });
+    toast(res.appended ? `Blocked ${name} — added to blocklist` : `Blocked ${name} — rule created`, "ok", { duration: 2800 });
     await refreshRulesData();
   } catch (e) {
     toast(`Block failed: ${e.message}`, "err", { duration: 4000 });
@@ -1348,20 +1274,25 @@ async function issueRulePromoBlock(id) {
   const md = ruleMdForSender(email, name, true);
   try {
     const res = await api("/api/rules", { method: "POST", body: JSON.stringify({ markdown: md }) });
-    toast(`Promo auto-delete ON for ${name} — rule created`, "ok", { duration: 2800 });
+    toast(res.appended ? `Promo auto-delete ON for ${name} — added to blocklist` : `Promo auto-delete ON for ${name} — rule created`, "ok", { duration: 2800 });
     await refreshRulesData();
   } catch (e) {
     toast(`Promo block failed: ${e.message}`, "err", { duration: 4000 });
   }
 }
 
+function normalizeSender(sender) {
+  const s = (sender || "").trim();
+  return s.includes("@") ? s.toLowerCase() : s;
+}
+
 function ruleMdForSender(email, name, promoOnly) {
+  const sender = normalizeSender(email);
   const scope = promoOnly ? "promo_only" : "all_mail";
-  const noun = name || email;
-  const title = promoOnly ? `Promos from ${noun}` : `Block ${noun}`;
+  const title = `Trash ${promoOnly ? "PROMOS" : "ALL"} from ${sender}`;
   const about = promoOnly
-    ? "Automatically delete promo emails from this sender."
-    : "Automatically delete all email from this sender.";
+    ? "Automatically trash promo mail from this sender."
+    : "Automatically trash all mail from this sender.";
   return [
     "---",
     `name: ${title}`,
@@ -1370,7 +1301,7 @@ function ruleMdForSender(email, name, promoOnly) {
     `scope: ${scope}`,
     "---",
     "## match",
-    `sender: ${email}`,
+    `sender: ${sender}`,
     "",
     "## about",
     about,
@@ -1387,7 +1318,6 @@ async function refreshRulesData() {
     state.rules = rulesRes.items || [];
     state.proposals = proposalsRes.items || [];
     state.wikiObservations = wikiRes.items || [];
-    renderRulesWiki();
   } catch (e) {
     // non-fatal
   }
@@ -1634,6 +1564,13 @@ function groupKeys() {
   return keys;
 }
 function stepGroup(dir) {
+  if (state.viewMode === "categories") {
+    const cats = categoryCounts().map(([c]) => c);
+    if (!cats.length) { toast("No categories to switch", "info", { duration: 1600 }); return; }
+    const idx = cats.indexOf(state.activeCatGroup);
+    selectCategoryGroup(cats[((idx + dir) % cats.length + cats.length) % cats.length]);
+    return;
+  }
   const keys = groupKeys();
   if (!keys.length) { toast("No groups to switch", "info", { duration: 1600 }); return; }
   const cur = state.activeGroupKey;
@@ -1709,11 +1646,6 @@ el.themeBtn.addEventListener("click", toggleTheme);
 el.skipForNowBtn.addEventListener("click", () => skipForNow());
 el.skippedBtn.addEventListener("click", restoreAllSkipped);
 el.skippedRestoreBtn.addEventListener("click", restoreAllSkipped);
-el.newRuleBtn.addEventListener("click", () => openEditor(null));
-el.rulesWikiToggle.addEventListener("click", () => {
-  state.rulesWikiCollapsed = !state.rulesWikiCollapsed;
-  renderRulesWiki();
-});
 el.editorCancel.addEventListener("click", cancelEditor);
 el.editorSave.addEventListener("click", saveEditor);
 el.editorDelete.addEventListener("click", deleteEditorRule);
@@ -1722,9 +1654,13 @@ applyThemeUI();
 el.bulkDeleteBtn.addEventListener("click", () => { if (state.activeGroupKey && state.activeGroupKey !== "singles") queueBulk("trash", state.activeGroupKey); else toast("Open a group to bulk delete", "info", { duration: 1600 }); });
 el.bulkArchiveBtn.addEventListener("click", () => { if (state.activeGroupKey && state.activeGroupKey !== "singles") queueBulk("archive", state.activeGroupKey); else toast("Open a group to bulk archive", "info", { duration: 1600 }); });
 el.groupList.addEventListener("click", (e) => {
+  const c = e.target.closest("[data-catgroup]");
+  if (c) { selectCategoryGroup(c.dataset.catgroup); return; }
   const t = e.target.closest("[data-group]");
   if (t) selectGroup(t.dataset.group);
 });
+el.viewSendersBtn.addEventListener("click", () => setViewMode("senders"));
+el.viewCatsBtn.addEventListener("click", () => setViewMode("categories"));
 
 if (el.searchInput) {
   el.searchInput.addEventListener("input", () => {
@@ -1743,27 +1679,14 @@ el.todoDueInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); confirmTodoModal(); }
   else if (e.key === "Escape") { e.preventDefault(); closeTodoModal(); }
 });
-el.categoryAddBtn.addEventListener("click", addCategory);
-el.categoryInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") { e.preventDefault(); addCategory(); }
-});
-el.categoryChips.addEventListener("click", (e) => {
-  const rm = e.target.closest("[data-catremove]");
-  if (rm) { removeCategory(rm.dataset.catremove); return; }
-  const chip = e.target.closest("[data-cat]");
-  if (chip) {
-    state.activeCategory = chip.dataset.cat;
-    renderCategoryChips();
-    renderGroupView();
-  }
-});
+el.remapCatsBtn.addEventListener("click", remapCategories);
 
 el.emailCards.addEventListener("click", (e) => {
   const t = e.target.closest("[data-expand]");
   if (!t || e.target.closest("button,a")) return;
   const id = t.dataset.expand;
   state.expandedCardId = state.expandedCardId === id ? null : id;
-  renderGroupView();
+  refreshMainView();
 });
 
 document.addEventListener("click", (e) => {
@@ -1777,34 +1700,6 @@ document.addEventListener("click", (e) => {
   else if (act === "rulePromoBlock") issueRulePromoBlock(id);
   else if (act === "keep") keepEmail(id);
   else actOn(act, id);
-});
-
-document.addEventListener("click", (e) => {
-  // Proposals
-  const pa = e.target.closest("[data-propose]");
-  if (pa) {
-    const id = parseInt(pa.dataset.id, 10);
-    if (pa.dataset.propose === "approve") approveProposal(id);
-    else if (pa.dataset.propose === "edit") editProposal(id);
-    else if (pa.dataset.propose === "reject") rejectProposal(id);
-    return;
-  }
-  // Rule actions
-  const ra = e.target.closest("[data-rule-toggle]");
-  if (ra) { toggleRule(parseInt(ra.dataset.id, 10)); return; }
-  const re = e.target.closest("[data-rule-edit]");
-  if (re) { openEditor(parseInt(re.dataset.ruleEdit, 10)); return; }
-  const ra2 = e.target.closest("[data-rule-apply]");
-  if (ra2) { applyRuleNow(parseInt(ra2.dataset.ruleApply, 10)); return; }
-  const rd = e.target.closest("[data-rule-delete]");
-  if (rd) { deleteRule(parseInt(rd.dataset.ruleDelete, 10)); return; }
-  const rm = e.target.closest("[data-rule-move]");
-  if (rm) { moveRule(parseInt(rm.dataset.id, 10), rm.dataset.ruleMove); return; }
-  // Wiki
-  const wa = e.target.closest("[data-wiki-create]");
-  if (wa) { createRuleFromWiki(parseInt(wa.dataset.wikiCreate, 10)); return; }
-  const wd = e.target.closest("[data-wiki-dismiss]");
-  if (wd) { dismissWiki(parseInt(wd.dataset.wikiDismiss, 10)); return; }
 });
 
 document.addEventListener("visibilitychange", () => {

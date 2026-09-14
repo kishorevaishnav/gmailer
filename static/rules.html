@@ -73,7 +73,7 @@
         </div>
         <div class="grid grid-cols-2 gap-2 mb-2">
           <label class="text-[11px] text-slate-500">Name<input id="fName" type="text" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs" placeholder="Block noisy sender" /></label>
-          <label class="text-[11px] text-slate-500">Sender (email / @domain / name)<input id="fSender" type="text" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs font-mono" placeholder="spammer@example.com" /></label>
+          <label class="text-[11px] text-slate-500">Senders (email / @domain — JSON list for several)<input id="fSender" type="text" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs font-mono" placeholder='spammer@example.com or ["a@x.com", "@y.com"]' /></label>
           <label class="text-[11px] text-slate-500">Action<select id="fAction" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs"><option value="trash">trash</option><option value="star">star</option><option value="skip">skip</option></select></label>
           <label class="text-[11px] text-slate-500">Scope<select id="fScope" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs"><option value="all_mail">all_mail</option><option value="promo_only">promo_only</option></select></label>
           <label class="text-[11px] text-slate-500">Subject keywords (comma)<input id="fSubject" type="text" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs" placeholder="sale, deal" /></label>
@@ -102,5 +102,6 @@
 
   <div id="toasts" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 items-center"></div>
   <script src="/static/rules.js"></script>
+  <script src="/static/dev-reload.js"></script>
 </body>
 </html>

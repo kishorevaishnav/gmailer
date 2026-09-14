@@ -9,8 +9,19 @@ def test_parse_minimal_rule():
     assert rule["name"] == "Amazon promos"
     assert rule["action"] == "trash"
     assert rule["scope"] == "promo_only"
-    assert rule["sender"] == "@amazon.com"
+    assert rule["sender"] == ["@amazon.com"]
     assert rule["enabled"] is True
+
+
+def test_parse_sender_list():
+    md = "---\nname: Blocklist\naction: trash\n---\n## match\nsender: [\"a@x.com\", \"@y.com\"]\n"
+    assert parse_skill_md(md)["sender"] == ["a@x.com", "@y.com"]
+
+
+def test_parse_sender_list_entry_validated():
+    md = "---\nname: X\naction: trash\n---\n## match\nsender: [\"a@x.com\", \"bademail\"]\n"
+    with pytest.raises(RuleParseError):
+        parse_skill_md(md)
 
 
 def test_parse_all_match_keys():
@@ -28,7 +39,7 @@ emails_per_day: 3
 Skip finance noise.
 """
     rule = parse_skill_md(md)
-    assert rule["sender"] == "Payroll <payroll@corp.com>"
+    assert rule["sender"] == ["Payroll <payroll@corp.com>"]
     assert rule["subject"] == ["invoice", "receipt"]
     assert rule["category"] == ["Finance/Bill"]
     assert rule["emails_per_day"] == 3

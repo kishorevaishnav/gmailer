@@ -56,6 +56,13 @@ def _parse_list(s: str) -> list[str]:
     return [x.strip() for x in s.split(",") if x.strip()]
 
 
+def _parse_sender_list(s: str) -> list[str]:
+    s = (s or "").strip()
+    if s.startswith("["):
+        return _parse_list(s)
+    return [s] if s else []
+
+
 def parse_skill_md(md: str) -> dict:
     errors: list[dict] = []
     front, rest = _split_frontmatter(md or "")
@@ -96,7 +103,7 @@ def parse_skill_md(md: str) -> dict:
         key = k.strip().lower()
         val = v.strip()
         if key == "sender":
-            body["sender"] = val
+            body["sender"] = _parse_sender_list(val)
         elif key == "subject":
             body["subject"] = _parse_list(val)
         elif key == "category":
@@ -112,13 +119,13 @@ def parse_skill_md(md: str) -> dict:
         else:
             errors.append({"line": i + 1, "msg": f"unknown match key: {key}"})
 
-    sender = body.get("sender")
-    if sender is not None:
-        s = sender.strip()
+    senders = body.get("sender") or []
+    for entry in senders:
+        s = (entry or "").strip()
         if "@" not in s and not s.startswith("@"):
             errors.append({"line": 1, "msg": "sender must be an email (a@b.com), @domain, or display name"})
 
-    if not (body.get("sender") or body.get("subject") or body.get("category") or body.get("emails_per_day")):
+    if not (senders or body.get("subject") or body.get("category") or body.get("emails_per_day")):
         errors.append({"line": 1, "msg": "at least one match condition is required (sender | subject | category | emails_per_day)"})
 
     if errors:
@@ -129,7 +136,7 @@ def parse_skill_md(md: str) -> dict:
         "enabled": front.get("enabled", True),
         "action": action,
         "scope": scope,
-        "sender": (sender or "").strip() or None,
+        "sender": senders or None,
         "subject": body.get("subject", []) or [],
         "category": body.get("category", []) or [],
         "emails_per_day": body.get("emails_per_day"),
@@ -141,6 +148,23 @@ def parsed_json(rule: dict) -> str:
     return json.dumps(rule, sort_keys=True)
 
 
+def sender_entry_matches(entry: str, email: str, name: str = "") -> bool:
+    s = (entry or "").strip()
+    if s.startswith("@"):
+        return email.endswith(s.lower())
+    if "@" in s:
+        return email == s.lower()
+    return name.lower() == s.lower() or email == s.lower()
+
+
+def _as_sender_list(value) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [value]
+    return [str(x) for x in value]
+
+
 def match_item(rule: dict, item: dict, ctx: dict | None = None) -> bool:
     """First-match-wins predicate. ctx = {"frequency": {email: emails_per_day}}."""
     if not rule.get("enabled", True):
@@ -148,20 +172,11 @@ def match_item(rule: dict, item: dict, ctx: dict | None = None) -> bool:
     if rule.get("scope") == "promo_only" and not item.get("promo"):
         return False
 
-    sender = rule.get("sender")
+    senders = _as_sender_list(rule.get("sender"))
     email = (item.get("sender_email") or "").strip().lower()
     name = (item.get("sender_name") or "").strip()
-    if sender:
-        s = sender.strip()
-        if s.startswith("@"):
-            if not email.endswith(s.lower()):
-                return False
-        elif "@" in s:
-            if email != s.lower():
-                return False
-        else:
-            if name.lower() != s.lower() and email != s.lower():
-                return False
+    if senders and not any(sender_entry_matches(s, email, name) for s in senders):
+        return False
 
     subs = rule.get("subject") or []
     subject = (item.get("subject") or "").lower()
@@ -192,24 +207,69 @@ def frequency_map(traces: list[dict], window_days: float = 30.0) -> dict[str, fl
     return {e: c / window_days for e, c in counts.items()}
 
 
+ACTION_VERBS = {"trash": "Trash", "star": "Star", "skip": "Skip"}
+
+
+def normalize_sender(sender: str) -> str:
+    s = (sender or "").strip()
+    return s.lower() if "@" in s else s
+
+
+def rule_name(parsed: dict) -> str:
+    verb = ACTION_VERBS.get((parsed.get("action") or "").lower(), "Apply")
+    scope = "PROMOS" if (parsed.get("scope") or "").lower() == "promo_only" else "ALL"
+    bits = []
+    senders = _as_sender_list(parsed.get("sender"))
+    if senders:
+        bits.append(f"from {senders[0]}" + (f" +{len(senders) - 1} more" if len(senders) > 1 else ""))
+    if parsed.get("subject"):
+        bits.append("subject [" + ", ".join(parsed["subject"]) + "]")
+    if parsed.get("category"):
+        bits.append("category [" + ", ".join(parsed["category"]) + "]")
+    if parsed.get("emails_per_day"):
+        bits.append(f">= {parsed['emails_per_day']}/day")
+    return f"{verb} {scope} {' + '.join(bits) or 'everything'}"
+
+
+def render_skill_md(parsed: dict, enabled: bool = True) -> str:
+    lines = ["---",
+             f"name: {parsed.get('name') or 'Untitled rule'}",
+             f"enabled: {'true' if enabled else 'false'}",
+             f"action: {parsed.get('action')}",
+             f"scope: {parsed.get('scope', 'all_mail')}",
+             "---", "## match"]
+    senders = _as_sender_list(parsed.get("sender"))
+    if len(senders) == 1:
+        lines.append(f"sender: {senders[0]}")
+    elif senders:
+        lines.append(f"sender: {json.dumps(senders, ensure_ascii=False)}")
+    if parsed.get("subject"):
+        lines.append(f"subject: {json.dumps(parsed['subject'], ensure_ascii=False)}")
+    if parsed.get("category"):
+        lines.append(f"category: {json.dumps(parsed['category'], ensure_ascii=False)}")
+    if parsed.get("emails_per_day"):
+        lines.append(f"emails_per_day: {parsed['emails_per_day']}")
+    lines += ["", "## about", parsed.get("about") or ""]
+    return "\n".join(lines) + "\n"
+
+
 def rule_md_for_sender(email: str, name: str, promo_only: bool = False) -> str:
+    sender = normalize_sender(email)
     scope = "promo_only" if promo_only else "all_mail"
-    noun = name or email
-    title = f"{'Promos from ' if promo_only else 'Block '}{noun}"
     about = (
-        "Automatically delete promo emails from this sender."
+        "Automatically trash promo mail from this sender."
         if promo_only
-        else "Automatically delete all email from this sender."
+        else "Automatically trash all mail from this sender."
     )
     return (
         "---\n"
-        f"name: {title}\n"
+        f"name: {rule_name({'action': 'trash', 'scope': scope, 'sender': sender})}\n"
         "enabled: true\n"
         "action: trash\n"
         f"scope: {scope}\n"
         "---\n"
         "## match\n"
-        f"sender: {email}\n"
+        f"sender: {sender}\n"
         "\n"
         "## about\n"
         f"{about}\n"

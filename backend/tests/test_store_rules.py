@@ -1,5 +1,7 @@
 import time
 
+import pytest
+
 from backend import store
 
 
@@ -17,6 +19,42 @@ def test_rule_crud_and_precedence_order():
     store.delete_rule(a)
     assert store.get_rule(a) is None
     assert [r["id"] for r in store.list_rules()] == [b]
+
+
+def _trash_rule_md(name, sender, scope="all_mail"):
+    return ("---\n"
+            f"name: {name}\nenabled: true\naction: trash\nscope: {scope}\n---\n"
+            "## match\n"
+            f"sender: {sender}\n")
+
+
+def _add_trash(name, sender, scope="all_mail"):
+    from backend.rules import parse_skill_md, parsed_json
+    md = _trash_rule_md(name, sender, scope)
+    return store.add_rule(md, parsed_json(parse_skill_md(md)))
+
+
+def test_append_and_remove_rule_sender():
+    rid = _add_trash("Trash ALL [blocklist]", '["a@x.com"]')
+    assert store.find_append_target("trash", "all_mail")["id"] == rid
+    updated = store.append_rule_sender(rid, "A@X.COM")
+    assert updated["parsed"]["sender"] == ["a@x.com"]
+    updated = store.append_rule_sender(rid, "b@y.com")
+    assert updated["parsed"]["sender"] == ["a@x.com", "b@y.com"]
+    updated = store.remove_rule_sender(rid, "A@X.COM")
+    assert updated["parsed"]["sender"] == ["b@y.com"]
+    assert store.remove_rule_sender(rid, "nobody@z.com") is None
+    with pytest.raises(ValueError):
+        store.remove_rule_sender(rid, "b@y.com")
+
+
+def test_rule_covers_sender_with_domain():
+    _add_trash("Trash ALL [blocklist]", '["a@x.com", "@y.com"]')
+    assert store.rule_covers_sender("trash", "all_mail", "a@x.com")
+    assert store.rule_covers_sender("trash", "all_mail", "any@y.com")
+    assert not store.rule_covers_sender("trash", "all_mail", "nope@z.com")
+    assert not store.rule_covers_sender("star", "all_mail", "a@x.com")
+    assert store.rule_covers_sender("trash", "promo_only", "a@x.com")
 
 
 def test_traces_roundtrip_and_trim():

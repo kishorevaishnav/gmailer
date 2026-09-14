@@ -15,7 +15,8 @@ def test_migrate_converts_and_drops_legacy():
     assert made == 2
     rules = store.list_rules()
     assert len(rules) == 2
-    by_sender = {parse_skill_md(r["skill_md"])["sender"]: parse_skill_md(r["skill_md"]) for r in rules}
+    by_sender = {tuple(parse_skill_md(r["skill_md"])["sender"]): parse_skill_md(r["skill_md"]) for r in rules}
+    by_sender = {k[0]: v for k, v in by_sender.items()}
     assert by_sender["a@b.com"]["action"] == "trash"
     assert by_sender["a@b.com"]["scope"] == "all_mail"
     assert by_sender["c@d.com"]["scope"] == "promo_only"

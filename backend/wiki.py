@@ -231,6 +231,13 @@ def propose_rule(cluster: dict, observation: dict, llm_fn=None) -> dict | None:
     kj = parsed_json(parsed)
     if store.identical_rule_exists(kj):
         return None
+    senders = parsed.get("sender") or []
+    if isinstance(senders, str):
+        senders = [senders]
+    if len(senders) == 1 and not parsed.get("subject") and not parsed.get("category") \
+            and not parsed.get("emails_per_day") \
+            and store.rule_covers_sender(parsed.get("action"), parsed.get("scope"), senders[0]):
+        return None
     if store.has_duplicate_proposal(md):
         return None
 

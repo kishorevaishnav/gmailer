@@ -35,6 +35,17 @@ def test_sender_display_name():
     assert not match_item(r, item(sender_email="noreply@bestbuy.com", sender_name="Other"), {})
 
 
+def test_sender_list_matches_any():
+    r = rule(sender=["other@x.com", "shop@amazon.com"])
+    assert match_item(r, item(sender_email="Shop@amazon.com", sender_name="Amazon"), {})
+    assert not match_item(r, item(sender_email="nobody@x.com", sender_name="Nobody"), {})
+
+
+def test_sender_legacy_string_still_works():
+    r = rule(sender="shop@amazon.com")
+    assert match_item(r, item(sender_email="Shop@amazon.com", sender_name="Amazon"), {})
+
+
 def test_promo_scope_requires_promo():
     r = rule(sender="@amazon.com", scope="promo_only")
     assert match_item(r, item(promo=True), {})

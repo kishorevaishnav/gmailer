@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import base64
+import io
 import json
 import logging
-import re
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -173,6 +174,31 @@ def api_message(message_id: str):
     return msg
 
 
+@app.get("/api/messages/{message_id}/attachments/{attachment_id}")
+def api_attachment(message_id: str, attachment_id: str):
+    service = require_service()
+    cached = store.load_message(message_id)
+    atts = (cached or {}).get("attachments") or []
+    att = next((a for a in atts if a.get("attachmentId") == attachment_id), None)
+    if att is None:
+        full = _run(gmail_service.get_full, service, message_id)
+        store.save_attachments(message_id, full.get("attachments") or [])
+        att = next((a for a in (full.get("attachments") or []) if a.get("attachmentId") == attachment_id), None)
+    if att is None:
+        raise HTTPException(status_code=404, detail="attachment not found")
+    raw = _run(gmail_service.get_attachment, service, message_id, attachment_id)
+    try:
+        blob = base64.urlsafe_b64decode((raw.get("data") or "").encode("ascii"))
+    except Exception:
+        raise HTTPException(status_code=502, detail="attachment decode failed")
+    filename = (att.get("filename") or "attachment").replace('"', "").replace("\r", "").replace("\n", "")
+    return StreamingResponse(
+        io.BytesIO(blob),
+        media_type=att.get("mimeType") or "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.post("/api/cache/clear")
 def api_cache_clear():
     cleared = store.clear_cache()
@@ -190,6 +216,24 @@ def api_messages(limit: int = 500, offset: int = 0):
     offset = max(0, int(offset))
     items = store.list_messages(limit=limit, offset=offset)
     return {"items": items, "count": len(items), "total": store.cache_count()}
+
+
+# --- Dev live-reload (browser auto-refresh on code change) --------------------
+
+@app.get("/api/dev-hash")
+def api_dev_hash():
+    import hashlib
+
+    h = hashlib.sha1()
+    files = sorted(config.STATIC_DIR.glob("*")) + [config.BASE_DIR / "main.py"] \
+        + sorted((config.BASE_DIR / "backend").glob("*.py"))
+    for f in files:
+        try:
+            st = f.stat()
+            h.update(f"{f.name}:{st.st_mtime_ns}:{st.st_size};".encode())
+        except OSError:
+            continue
+    return {"hash": h.hexdigest()}
 
 
 # --- Search (local cache: subject / sender / snippet / body) ------------------
@@ -412,6 +456,23 @@ def api_rules():
     return {"items": store.list_rules()}
 
 
+def _consolidate_trash_sender(parsed: dict) -> dict | None:
+    senders = parsed.get("sender") or []
+    if isinstance(senders, str):
+        senders = [senders]
+    if parsed.get("action") != "trash" or len(senders) != 1 or parsed.get("subject") \
+            or parsed.get("category") or parsed.get("emails_per_day"):
+        return None
+    target = store.find_append_target("trash", parsed.get("scope") or "all_mail")
+    if target is None:
+        return None
+    updated = store.append_rule_sender(target["id"], senders[0])
+    if updated is None:
+        return None
+    updated["appended"] = True
+    return updated
+
+
 @app.post("/api/rules")
 def api_rules_create(req: RuleCreateRequest):
     md = (req.markdown or "").strip()
@@ -421,10 +482,32 @@ def api_rules_create(req: RuleCreateRequest):
         parsed = parse_skill_md(md)
     except RuleParseError as exc:
         raise HTTPException(status_code=400, detail={"errors": exc.errors})
+    merged = _consolidate_trash_sender(parsed)
+    if merged is not None:
+        return merged
     rid = store.add_rule(md, json.dumps(parsed, sort_keys=True))
     if not req.enabled:
         store.update_rule(rid, enabled=False)
-    return store.get_rule(rid)
+    result = store.get_rule(rid)
+    result["appended"] = False
+    return result
+
+
+class RuleSenderRemoveRequest(BaseModel):
+    sender: str
+
+
+@app.post("/api/rules/{rule_id}/senders/remove")
+def api_rule_sender_remove(rule_id: int, req: RuleSenderRemoveRequest):
+    if store.get_rule(rule_id) is None:
+        raise HTTPException(status_code=404, detail="rule not found")
+    try:
+        updated = store.remove_rule_sender(rule_id, req.sender)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if updated is None:
+        raise HTTPException(status_code=404, detail="sender not on rule")
+    return updated
 
 
 @app.patch("/api/rules/{rule_id}")
@@ -516,7 +599,11 @@ def api_proposal_approve(proposal_id: int, req: ProposalApproveRequest = Proposa
         parsed = parse_skill_md(md)
     except RuleParseError as exc:
         raise HTTPException(status_code=400, detail={"errors": exc.errors})
-    rid = store.add_rule(md, json.dumps(parsed, sort_keys=True))
+    merged = _consolidate_trash_sender(parsed)
+    if merged is not None:
+        rid = merged["id"]
+    else:
+        rid = store.add_rule(md, json.dumps(parsed, sort_keys=True))
     if prop.get("observation_id"):
         store.mark_observation_converted(prop["observation_id"], rid)
     store.approve_proposal(proposal_id, rid)
@@ -606,6 +693,28 @@ class CategoryRemoveRequest(BaseModel):
 @app.get("/api/categories")
 def api_categories():
     return {"items": store.get_categories()}
+
+
+class CategoryRemapRequest(BaseModel):
+    limit: int = 500
+
+
+@app.post("/api/categories/remap")
+def api_categories_remap(req: CategoryRemapRequest):
+    limit = max(1, min(int(req.limit or 500), 2000))
+    cats = store.get_categories()
+    scanned = changed = 0
+    for m in store.list_messages(limit=limit):
+        new_cat = ai_summary.recategorize_message(m, cats)
+        if (new_cat or "") != (m.get("category") or ""):
+            summary = m.get("summary")
+            if isinstance(summary, dict):
+                summary["category"] = new_cat
+            m["category"] = new_cat
+            store.save_message(m, summary if isinstance(summary, dict) else None)
+            changed += 1
+        scanned += 1
+    return {"scanned": scanned, "changed": changed}
 
 
 @app.post("/api/categories/add")

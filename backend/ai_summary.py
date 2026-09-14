@@ -81,6 +81,109 @@ _FALLBACK_CATEGORIES = [
 _ACTION_NEEDED_VALUES = {"pay", "respond", "review", "nothing"}
 _BIAS_VALUES = {"neutral", "positive", "negative", "biased"}
 
+_BANK_DOMAIN_HINTS = (
+    "axisbank", "citibank", "citi.com", "chase", "amex", "americanexpress",
+    "hdfcbank", "icicibank", "onlinesbi", "sbi.co", "kotak", "yesbank",
+    "pncbank", "wellsfargo", "bankofamerica", "capitalone", "discover.com",
+    "usbank", "barclays", "hsbc", "standardchartered", "dbsbank", "rblbank",
+    "federalbank", "indusind", "paytm-bank", "jupiter", "fi.money",
+)
+
+_BANK_NAME_HINTS = (
+    "axis bank", "citibank", "citi cards", "chase bank", "american express",
+    "hdfc bank", "icici bank", "state bank", "kotak bank", "capital one",
+)
+
+
+def _find_category(categories: list[str], wanted: str) -> str | None:
+    for a in categories or _FALLBACK_CATEGORIES:
+        if a.lower() == wanted.lower():
+            return a
+    return None
+
+
+def _bank_category(categories: list[str]) -> str | None:
+    return _find_category(categories, "banks")
+
+
+_PROMO_HINT_RE = re.compile(
+    r"\b(offer|offers|deal|deals|sale|sales|discounts?|cash\s*back|earn|"
+    r"reward|rewards|coupon|promo|promotions?|clearance)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_promo(msg: dict) -> bool:
+    if msg.get("promo"):
+        return True
+    return bool(_PROMO_HINT_RE.search(msg.get("subject") or ""))
+
+
+def is_bank_sender(sender_email: str, sender_name: str = "") -> bool:
+    email = (sender_email or "").strip().lower()
+    name = (sender_name or "").strip().lower()
+    if email and any(h in email for h in _BANK_DOMAIN_HINTS):
+        return True
+    return bool(name) and any(h in name for h in _BANK_NAME_HINTS)
+
+
+def apply_bank_override(msg: dict, category: str, categories: list[str]) -> str:
+    if not is_bank_sender(msg.get("sender_email") or "", msg.get("sender_name") or ""):
+        return category
+    promos = _find_category(categories, "promos")
+    if _looks_promo(msg) and promos:
+        return promos
+    banks = _bank_category(categories)
+    if banks and (category or "").lower() != "banks":
+        return banks
+    return category
+
+
+def canonical_category(value: str, categories: list[str]) -> str | None:
+    v = (value or "").strip()
+    for a in categories or []:
+        if a.lower() == v.lower():
+            return a
+    return None
+
+
+def _llm_category_only(msg: dict, categories: list[str]) -> str | None:
+    if not config.OLLAMA_MODEL or not categories:
+        return None
+    sender = msg.get("sender_name") or msg.get("sender_email") or "Unknown sender"
+    subject = msg.get("subject") or "(no subject)"
+    snippet = (msg.get("snippet") or "").strip()[:600]
+    prompt = (f"From: {sender}\nSubject: {subject}\n\n{snippet}\n\n"
+              f"Classify into exactly one of: {', '.join(categories)}. "
+              "Reply with ONLY the category name, nothing else.")
+    try:
+        resp = requests.post(
+            config.OLLAMA_URL.rstrip("/") + "/api/chat",
+            json={"model": config.OLLAMA_MODEL,
+                  "messages": [{"role": "user", "content": prompt}],
+                  "stream": False, "keep_alive": "30m",
+                  "options": {"temperature": 0, "num_predict": 30}},
+            timeout=min(config.SUMMARY_TIMEOUT_SECONDS, 30),
+        )
+        resp.raise_for_status()
+        text = ((resp.json().get("message") or {}).get("content", "") or "").strip()
+    except Exception as exc:
+        logger.warning("Ollama category-only unavailable: %s", exc)
+        return None
+    text = re.sub(r"```|\"|'", "", text).strip()
+    return canonical_category(text, categories)
+
+
+def recategorize_message(msg: dict, categories: list[str]) -> str:
+    cats = categories or _allowed_categories()
+    current = (msg.get("category") or "").strip()
+    if is_bank_sender(msg.get("sender_email") or "", msg.get("sender_name") or ""):
+        return apply_bank_override(msg, current, cats)
+    hit = canonical_category(current, cats)
+    if hit:
+        return hit
+    return _llm_category_only(msg, cats) or current or "Unclear"
+
 
 def _allowed_categories() -> list[str]:
     """Current allowed categories from the DB, falling back to defaults."""
@@ -151,6 +254,7 @@ def generate_summary(msg: dict) -> dict:
     summary = _ollama_summarize(msg, categories)
     if summary is None:
         summary = _mock_summarize(msg)
+    summary["category"] = apply_bank_override(msg, summary.get("category", ""), categories)
 
     if mid:
         if len(_CACHE) >= _CACHE_MAX:
@@ -654,6 +758,7 @@ def _ollama_group_summarize(label: str, emails: list[dict]) -> dict | None:
     items = parsed["summaries"]
     for idx, e in enumerate(group):
         core = _normalize_email_summary(items[idx] if idx < len(items) else {}, categories)
+        core["category"] = apply_bank_override(e, core.get("category", ""), categories)
         summary = {
             "id": e.get("id", ""),
             "subject": str(e.get("subject") or "(no subject)"),
