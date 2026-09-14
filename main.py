@@ -195,7 +195,7 @@ def api_attachment(message_id: str, attachment_id: str):
     return StreamingResponse(
         io.BytesIO(blob),
         media_type=att.get("mimeType") or "application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
     )
 
 
@@ -693,6 +693,35 @@ class CategoryRemoveRequest(BaseModel):
 @app.get("/api/categories")
 def api_categories():
     return {"items": store.get_categories()}
+
+
+class SenderMapAddRequest(BaseModel):
+    pattern: str
+    category: str
+    promo_sensitive: bool = True
+
+
+class SenderMapRemoveRequest(BaseModel):
+    pattern: str
+
+
+@app.get("/api/sender-map")
+def api_sender_map():
+    return {"items": store.get_sender_map()}
+
+
+@app.post("/api/sender-map")
+def api_sender_map_add(req: SenderMapAddRequest):
+    try:
+        items = store.add_sender_map(req.pattern, req.category, req.promo_sensitive)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"items": items}
+
+
+@app.post("/api/sender-map/remove")
+def api_sender_map_remove(req: SenderMapRemoveRequest):
+    return {"items": store.remove_sender_map(req.pattern)}
 
 
 class CategoryRemapRequest(BaseModel):

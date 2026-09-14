@@ -50,6 +50,13 @@ CREATE TABLE IF NOT EXISTS categories (
     created_at  REAL
 );
 
+CREATE TABLE IF NOT EXISTS sender_map (
+    pattern         TEXT PRIMARY KEY,
+    category        TEXT NOT NULL,
+    promo_sensitive INTEGER DEFAULT 1,
+    created_at      REAL
+);
+
 CREATE TABLE IF NOT EXISTS skipped (
     id          TEXT PRIMARY KEY,
     item        TEXT NOT NULL,
@@ -154,6 +161,41 @@ _DEFAULT_CATEGORIES = [
     "Other",
 ]
 
+_SEED_SENDER_MAP = [
+    ("axisbank", "Banks", 1),
+    ("axis bank", "Banks", 1),
+    ("citibank", "Banks", 1),
+    ("citi.com", "Banks", 1),
+    ("citi cards", "Banks", 1),
+    ("chase", "Banks", 1),
+    ("amex", "Banks", 1),
+    ("american express", "Banks", 1),
+    ("hdfcbank", "Banks", 1),
+    ("hdfc bank", "Banks", 1),
+    ("icicibank", "Banks", 1),
+    ("icici bank", "Banks", 1),
+    ("onlinesbi", "Banks", 1),
+    ("state bank", "Banks", 1),
+    ("kotak", "Banks", 1),
+    ("yesbank", "Banks", 1),
+    ("wellsfargo", "Banks", 1),
+    ("bankofamerica", "Banks", 1),
+    ("capitalone", "Banks", 1),
+    ("capital one", "Banks", 1),
+    ("xfinity", "Services", 1),
+    ("comcast", "Services", 1),
+    ("pge.com", "Services", 1),
+    ("pacific gas", "Services", 1),
+    ("socalgas", "Services", 1),
+    ("conedison", "Services", 1),
+    ("con edison", "Services", 1),
+    ("duke-energy", "Services", 1),
+    ("national grid", "Services", 1),
+    ("att.com", "Services", 1),
+    ("verizon", "Services", 1),
+    ("t-mobile", "Services", 1),
+]
+
 
 def _get() -> sqlite3.Connection:
     global _conn
@@ -183,6 +225,7 @@ def _get() -> sqlite3.Connection:
             except (sqlite3.OperationalError, sqlite3.ProgrammingError):
                 pass
         _seed_default_categories()
+        _seed_sender_map()
         _conn.commit()
     return _conn
 
@@ -199,6 +242,20 @@ def _seed_default_categories() -> None:
             _get().commit()
     except Exception as exc:
         logger.warning("store._seed_default_categories failed: %s", exc)
+
+
+def _seed_sender_map() -> None:
+    try:
+        count = _get().execute("SELECT COUNT(*) FROM sender_map").fetchone()[0]
+        if count == 0:
+            _get().executemany(
+                "INSERT OR IGNORE INTO sender_map (pattern, category, promo_sensitive, created_at)"
+                " VALUES (?, ?, ?, ?)",
+                [(pat, cat, sens, time.time()) for pat, cat, sens in _SEED_SENDER_MAP],
+            )
+            _get().commit()
+    except Exception as exc:
+        logger.warning("store._seed_sender_map failed: %s", exc)
 
 
 def save_message(msg: dict, summary: dict | None = None) -> None:
@@ -530,6 +587,52 @@ def add_category(name: str) -> list[str]:
         except Exception as exc:
             logger.warning("store.add_category failed: %s", exc)
     return get_categories()
+
+
+def get_sender_map() -> list[dict]:
+    """Sender mappings, longest pattern first so specifics beat generals."""
+    try:
+        with _lock:
+            rows = _get().execute(
+                "SELECT pattern, category, promo_sensitive FROM sender_map"
+                " ORDER BY length(pattern) DESC, pattern"
+            ).fetchall()
+        return [{"pattern": str(r["pattern"]), "category": str(r["category"]),
+                 "promo_sensitive": bool(r["promo_sensitive"])} for r in rows]
+    except Exception as exc:
+        logger.warning("store.get_sender_map failed: %s", exc)
+        return []
+
+
+def add_sender_map(pattern: str, category: str, promo_sensitive: bool = True) -> list[dict]:
+    pattern = (pattern or "").strip().lower()
+    category = (category or "").strip()
+    if not pattern or not category:
+        raise ValueError("pattern and category are required")
+    add_category(category)
+    try:
+        with _lock:
+            _get().execute(
+                "INSERT OR REPLACE INTO sender_map (pattern, category, promo_sensitive, created_at)"
+                " VALUES (?, ?, ?, ?)",
+                (pattern, category, 1 if promo_sensitive else 0, time.time()),
+            )
+            _get().commit()
+    except Exception as exc:
+        logger.warning("store.add_sender_map failed: %s", exc)
+        raise
+    return get_sender_map()
+
+
+def remove_sender_map(pattern: str) -> list[dict]:
+    pattern = (pattern or "").strip().lower()
+    try:
+        with _lock:
+            _get().execute("DELETE FROM sender_map WHERE pattern = ?", (pattern,))
+            _get().commit()
+    except Exception as exc:
+        logger.warning("store.remove_sender_map failed: %s", exc)
+    return get_sender_map()
 
 
 def remove_category(name: str) -> list[str]:

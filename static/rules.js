@@ -15,9 +15,11 @@ const el = {
   fSubject: $("fSubject"), fCategory: $("fCategory"), fEpd: $("fEpd"), fEnabled: $("fEnabled"),
   fAbout: $("fAbout"), buildMdBtn: $("buildMdBtn"),
   refreshBtn: $("refreshBtn"), newRuleBtn: $("newRuleBtn"), toasts: $("toasts"),
+  senderMapList: $("senderMapList"), smPattern: $("smPattern"), smCategory: $("smCategory"),
+  smPromo: $("smPromo"), smAdd: $("smAdd"),
 };
 
-const state = { rules: [], proposals: [], wiki: [], editingId: null, tab: "rules" };
+const state = { rules: [], proposals: [], wiki: [], senders: [], categories: [], editingId: null, tab: "rules" };
 
 async function api(path, opts = {}) {
   const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
@@ -56,7 +58,7 @@ function showErrors(err) {
 
 function setTab(name) {
   state.tab = name;
-  for (const t of ["rules", "proposals", "wiki", "traces"]) {
+  for (const t of ["rules", "proposals", "wiki", "traces", "senders"]) {
     $("tab-" + t).classList.toggle("hidden", t !== name);
   }
   document.querySelectorAll(".tabBtn").forEach((b) => {
@@ -160,6 +162,15 @@ function renderAll() {
   </li>`).join("");
 
   el.traceRuleFilter.innerHTML = `<option value="">all rules</option>` + state.rules.map((r) => `<option value="${r.id}">${esc((r.parsed && r.parsed.name) || ("#" + r.id))}</option>`).join("");
+
+  el.smCategory.innerHTML = state.categories.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+  el.senderMapList.innerHTML = state.senders.length ? state.senders.map((m) => `<li class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 px-3 py-2 flex items-center gap-2">
+    <span class="font-mono text-xs truncate flex-1">${esc(m.pattern)}</span>
+    <span class="text-[10px] text-slate-400">→</span>
+    <span class="rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">${esc(m.category)}</span>
+    ${m.promo_sensitive ? `<span class="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:text-amber-300" title="Promo-looking mail detours to Promos">PROMO↗</span>` : ""}
+    <button data-smact="del" data-pattern="${esc(m.pattern)}" class="rounded bg-red-500/15 px-2 py-0.5 text-[10px] font-bold text-red-700 dark:text-red-300" title="Delete mapping">×</button>
+  </li>`).join("") : `<li class="text-xs text-slate-500">No sender mappings yet.</li>`;
 }
 
 function enableDrag() {
@@ -278,12 +289,16 @@ async function saveRule() {
 
 async function loadAll(resetEditor = true) {
   try {
-    const [rules, props, wiki] = await Promise.all([
+    const [rules, props, wiki, senders, cats] = await Promise.all([
       api("/api/rules"), api("/api/proposals"), api("/api/wiki/observations"),
+      api("/api/sender-map").catch(() => ({ items: [] })),
+      api("/api/categories").catch(() => ({ items: [] })),
     ]);
     state.rules = rules.items || [];
     state.proposals = (props.items || []).filter((p) => p.status === "pending");
     state.wiki = wiki.items || [];
+    state.senders = senders.items || [];
+    state.categories = cats.items || [];
     renderAll();
     if (resetEditor && state.editingId != null) editRule(state.editingId);
     if (resetEditor && state.editingId == null && !el.ruleMarkdown.value) newRule();
@@ -310,6 +325,30 @@ el.buildMdBtn.addEventListener("click", buildMarkdown);
 el.cancelBtn.addEventListener("click", () => newRule());
 el.saveBtn.addEventListener("click", saveRule);
 el.traceReload.addEventListener("click", loadTraces);
+el.smAdd.addEventListener("click", async () => {
+  const pattern = el.smPattern.value.trim();
+  const category = el.smCategory.value;
+  if (!pattern) { toast("Pattern required", "err"); return; }
+  try {
+    const res = await api("/api/sender-map", {
+      method: "POST",
+      body: JSON.stringify({ pattern, category, promo_sensitive: el.smPromo.checked }),
+    });
+    state.senders = res.items || [];
+    el.smPattern.value = "";
+    renderAll();
+    toast(`“${pattern}” → ${category}`, "ok");
+  } catch (err) { toast(`Add failed: ${err.message}`, "err"); }
+});
+el.senderMapList.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-smact]");
+  if (!b) return;
+  try {
+    const res = await api("/api/sender-map/remove", { method: "POST", body: JSON.stringify({ pattern: b.dataset.pattern }) });
+    state.senders = res.items || [];
+    renderAll();
+  } catch (err) { toast(`Delete failed: ${err.message}`, "err"); }
+});
 el.deleteBtn.addEventListener("click", async () => {
   if (state.editingId == null || !confirm("Delete this rule?")) return;
   try {

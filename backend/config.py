@@ -22,7 +22,7 @@ CREDENTIALS_FILE = BASE_DIR / "credentials.json"
 TOKEN_FILE = BASE_DIR / "token.json"
 
 HOST = "localhost"
-PORT = 8000
+PORT = 8601
 AUTH_REDIRECT_URI = f"http://{HOST}:{PORT}/auth/callback"
 
 DEFAULT_BATCH = 200

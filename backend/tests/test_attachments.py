@@ -1,39 +1,50 @@
-from backend.ai_summary import apply_bank_override, is_bank_sender
+from backend import store
+from backend.ai_summary import recategorize_message, sender_mapped_category
 from backend.gmail_service import extract_attachments
 
 
 CATS = ["Banks", "Promos", "Unclear"]
 
 
-def test_bank_senders_detected():
-    assert is_bank_sender("info@digital.axisbankmail.bank.in")
-    assert is_bank_sender("alerts@info6.citi.com")
-    assert is_bank_sender("chase@mcmap.chase.com")
-    assert is_bank_sender("help@amex.com", "American Express")
-    assert not is_bank_sender("news@costco.com", "Costco")
-    assert not is_bank_sender("", "")
+def _with_cats(*names):
+    for n in names:
+        store.add_category(n)
+    return store.get_categories()
 
 
-def test_bank_override_relabels_promos():
-    msg = {"sender_email": "citicards@info6.citi.com", "sender_name": "Citi"}
-    assert apply_bank_override(msg, "Promos", CATS) == "Banks"
-    assert apply_bank_override(msg, "Banks", CATS) == "Banks"
-    assert apply_bank_override({"sender_email": "x@y.com"}, "Promos", CATS) == "Promos"
-    assert apply_bank_override(msg, "Promos", ["Promos", "Other"]) == "Promos"
+def test_sender_map_bank_and_promo_split():
+    cats = _with_cats("Banks", "Promos")
+    assert sender_mapped_category(
+        {"sender_email": "citicards@info6.citi.com", "subject": "Your statement"}, cats) == "Banks"
+    assert sender_mapped_category(
+        {"sender_email": "info@digital.axisbankmail.bank.in",
+         "subject": "Save more with handpicked offers of the week"}, cats) == "Promos"
+    assert sender_mapped_category(
+        {"sender_email": "chase@mcmap.chase.com", "subject": "Monthly update", "promo": True},
+        cats) == "Promos"
+    assert sender_mapped_category({"sender_email": "news@costco.com", "subject": "x"}, cats) is None
+
+
+def test_sender_map_longest_pattern_wins_and_crud():
+    cats = _with_cats("Banks", "Services")
+    assert sender_mapped_category({"sender_email": "a@xfinity.com"}, cats) == "Services"
+    store.add_sender_map("alerts@info6.citi.com", "Services", False)
+    assert sender_mapped_category({"sender_email": "alerts@info6.citi.com"}, cats) == "Services"
+    assert sender_mapped_category({"sender_email": "other@info6.citi.com"}, cats) == "Banks"
+    items = store.remove_sender_map("alerts@info6.citi.com")
+    assert all(m["pattern"] != "alerts@info6.citi.com" for m in items)
+
+
+def test_sender_map_missing_category_skips():
+    assert sender_mapped_category({"sender_email": "a@xfinity.com"}, ["Banks"]) is None
 
 
 def test_bank_promo_content_goes_to_promos():
-    from backend.ai_summary import recategorize_message
-    offer = {"sender_email": "info@digital.axisbankmail.bank.in", "sender_name": "Axis",
-             "subject": "Save more with handpicked offers of the week", "promo": False}
-    assert apply_bank_override(offer, "Banks", CATS) == "Promos"
+    cats = _with_cats("Banks", "Promos")
     stmt = {"sender_email": "citicards@info6.citi.com", "sender_name": "Citi",
             "subject": "Your statement is now available online", "promo": False,
             "category": "Promos"}
-    assert recategorize_message(stmt, CATS) == "Banks"
-    flagged = {"sender_email": "chase@mcmap.chase.com", "subject": "Monthly update",
-               "promo": True, "category": "Banks"}
-    assert recategorize_message(flagged, CATS) == "Promos"
+    assert recategorize_message(stmt, cats) == "Banks"
 
 
 def test_recategorize_keeps_valid_and_repairs_case():

@@ -1,8 +1,11 @@
 # Gmailer — agent working rules
 
 ## Dev loop
-- Run: `.venv/bin/uvicorn main:app --port 8000 --reload --reload-include '*.py'`
+- Run: `.venv/bin/uvicorn main:app --port 8601 --reload --reload-include '*.py'`
   (include filter keeps `data/*.db` writes from restarting the server).
+- OAuth redirect URI is derived from the port (`/auth/callback`): after any
+  port change, update the Authorized redirect URI in Google Cloud Console or
+  sign-in will fail. The saved token keeps working — no re-auth needed.
 - Live reload: every page under `static/*.html` must end with
   `<script src="/static/dev-reload.js"></script>`. It polls `GET /api/dev-hash`
   (stat-hash over `static/*`, `main.py`, `backend/*.py`) every 2.5s and reloads

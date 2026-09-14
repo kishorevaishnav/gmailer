@@ -81,31 +81,6 @@ _FALLBACK_CATEGORIES = [
 _ACTION_NEEDED_VALUES = {"pay", "respond", "review", "nothing"}
 _BIAS_VALUES = {"neutral", "positive", "negative", "biased"}
 
-_BANK_DOMAIN_HINTS = (
-    "axisbank", "citibank", "citi.com", "chase", "amex", "americanexpress",
-    "hdfcbank", "icicibank", "onlinesbi", "sbi.co", "kotak", "yesbank",
-    "pncbank", "wellsfargo", "bankofamerica", "capitalone", "discover.com",
-    "usbank", "barclays", "hsbc", "standardchartered", "dbsbank", "rblbank",
-    "federalbank", "indusind", "paytm-bank", "jupiter", "fi.money",
-)
-
-_BANK_NAME_HINTS = (
-    "axis bank", "citibank", "citi cards", "chase bank", "american express",
-    "hdfc bank", "icici bank", "state bank", "kotak bank", "capital one",
-)
-
-
-def _find_category(categories: list[str], wanted: str) -> str | None:
-    for a in categories or _FALLBACK_CATEGORIES:
-        if a.lower() == wanted.lower():
-            return a
-    return None
-
-
-def _bank_category(categories: list[str]) -> str | None:
-    return _find_category(categories, "banks")
-
-
 _PROMO_HINT_RE = re.compile(
     r"\b(offer|offers|deal|deals|sale|sales|discounts?|cash\s*back|earn|"
     r"reward|rewards|coupon|promo|promotions?|clearance)\b",
@@ -119,17 +94,39 @@ def _looks_promo(msg: dict) -> bool:
     return bool(_PROMO_HINT_RE.search(msg.get("subject") or ""))
 
 
-def is_bank_sender(sender_email: str, sender_name: str = "") -> bool:
-    email = (sender_email or "").strip().lower()
-    name = (sender_name or "").strip().lower()
-    if email and any(h in email for h in _BANK_DOMAIN_HINTS):
-        return True
-    return bool(name) and any(h in name for h in _BANK_NAME_HINTS)
+def _find_category(categories: list[str], wanted: str) -> str | None:
+    for a in categories or _FALLBACK_CATEGORIES:
+        if a.lower() == wanted.lower():
+            return a
+    return None
 
 
-def apply_bank_override(msg: dict, category: str, categories: list[str]) -> str:
-    if not is_bank_sender(msg.get("sender_email") or "", msg.get("sender_name") or ""):
-        return category
+def sender_mapped_category(msg: dict, categories: list[str]) -> str | None:
+    try:
+        mappings = store.get_sender_map()
+    except Exception:
+        return None
+    email = (msg.get("sender_email") or "").strip().lower()
+    name = (msg.get("sender_name") or "").strip().lower()
+    for m in mappings:
+        pat = (m.get("pattern") or "").lower()
+        if not pat:
+            continue
+        if "@" in pat:
+            hit = bool(email) and pat in email
+        else:
+            hit = (bool(email) and pat in email) or (bool(name) and pat in name)
+        if not hit:
+            continue
+        target = _find_category(categories, m.get("category") or "")
+        if not target:
+            continue
+        if m.get("promo_sensitive") and _looks_promo(msg):
+            promos = _find_category(categories, "promos")
+            if promos:
+                return promos
+        return target
+    return None
     promos = _find_category(categories, "promos")
     if _looks_promo(msg) and promos:
         return promos
@@ -177,8 +174,9 @@ def _llm_category_only(msg: dict, categories: list[str]) -> str | None:
 def recategorize_message(msg: dict, categories: list[str]) -> str:
     cats = categories or _allowed_categories()
     current = (msg.get("category") or "").strip()
-    if is_bank_sender(msg.get("sender_email") or "", msg.get("sender_name") or ""):
-        return apply_bank_override(msg, current, cats)
+    mapped = sender_mapped_category(msg, cats)
+    if mapped is not None:
+        return mapped
     hit = canonical_category(current, cats)
     if hit:
         return hit
@@ -254,7 +252,7 @@ def generate_summary(msg: dict) -> dict:
     summary = _ollama_summarize(msg, categories)
     if summary is None:
         summary = _mock_summarize(msg)
-    summary["category"] = apply_bank_override(msg, summary.get("category", ""), categories)
+    summary["category"] = sender_mapped_category(msg, categories) or summary.get("category", "")
 
     if mid:
         if len(_CACHE) >= _CACHE_MAX:
@@ -758,7 +756,7 @@ def _ollama_group_summarize(label: str, emails: list[dict]) -> dict | None:
     items = parsed["summaries"]
     for idx, e in enumerate(group):
         core = _normalize_email_summary(items[idx] if idx < len(items) else {}, categories)
-        core["category"] = apply_bank_override(e, core.get("category", ""), categories)
+        core["category"] = sender_mapped_category(e, categories) or core.get("category", "")
         summary = {
             "id": e.get("id", ""),
             "subject": str(e.get("subject") or "(no subject)"),

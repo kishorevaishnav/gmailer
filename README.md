@@ -59,7 +59,7 @@ gmailer/
 
 > **Troubleshooting:** if Google rejects the redirect after sign-in
 > (`redirect_uri_mismatch`), re-create the client with "Web application" type and
-> add `http://localhost:8000/auth/callback` as an Authorized redirect URI.
+> add `http://localhost:8601/auth/callback` as an Authorized redirect URI.
 
 ## 2. Run it
 
@@ -67,10 +67,10 @@ gmailer/
 # inside this folder
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/uvicorn main:app --port 8000
+.venv/bin/uvicorn main:app --port 8601
 ```
 
-Open **http://localhost:8000**, click **Sign in with Google**, approve, and you land in the triage view.
+Open **http://localhost:8601**, click **Sign in with Google**, approve, and you land in the triage view.
 
 > `python3` needs to be ≥ 3.10 (e.g. `/opt/homebrew/bin/python3.11`). If your default is 3.9,
 > use the full path.

@@ -94,15 +94,15 @@
         <ul id="skippedList" class="mt-2 hidden space-y-1"></ul>
       </div>
 
-      <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-800 max-h-[36%] overflow-y-auto">
+      <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex-1 min-h-0 overflow-y-auto">
         <div class="flex items-center justify-between mb-3">
           <div class="flex items-center gap-1">
             <button id="viewSendersBtn" class="rounded-md px-2 py-1 text-[10px] font-bold transition" title="Group emails by sender">Senders</button>
             <button id="viewCatsBtn" class="rounded-md px-2 py-1 text-[10px] font-bold transition" title="Group emails by category">Categories</button>
           </div>
-          <div class="flex items-center gap-1">
+          <div class="flex items-center gap-1.5">
             <span id="groupsCount" class="text-[10px] text-slate-500 dark:text-slate-600"></span>
-            <button id="remapCatsBtn" class="text-[11px] font-bold text-slate-400 hover:text-violet-500 dark:hover:text-violet-300 transition" title="Re-run categorization on cached emails">↻</button>
+            <button id="remapCatsBtn" class="rounded-md border border-slate-300 dark:border-slate-700 px-2 py-1 text-[10px] font-bold text-slate-500 dark:text-slate-400 hover:border-violet-500/60 hover:text-violet-600 dark:hover:text-violet-300 transition" title="Re-run categorization on cached emails">↻ Remap</button>
           </div>
         </div>
         <ul id="groupList" class="space-y-2"></ul>

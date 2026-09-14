@@ -931,8 +931,19 @@ function detailHTML(it) {
   const d = state.detail.get(it.id);
   if (!d) fetchDetail(it.id);
   const atts = ((d && d.attachments) || it.attachments || []);
-  const attHTML = atts.length ? `<div class="mt-2 flex items-center gap-1.5 flex-wrap">${atts.map((a) => `
-    <a href="/api/messages/${esc(it.id)}/attachments/${esc(a.attachmentId)}" target="_blank" rel="noopener noreferrer" class="rounded-lg bg-violet-500/15 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-500/30 transition" title="${esc(a.mimeType || "file")} · ${fmtSize(a.size)} — click to download">📎 ${esc(a.filename || "attachment")}</a>`).join("")}</div>` : "";
+  const attPreview = (a) => {
+    const url = `/api/messages/${esc(it.id)}/attachments/${esc(a.attachmentId)}`;
+    const mime = a.mimeType || "";
+    const label = `📎 ${esc(a.filename || "attachment")} <span class="opacity-70 font-normal">${fmtSize(a.size)}</span>`;
+    if (mime.startsWith("image/")) {
+      return `<a href="${url}" target="_blank" rel="noopener noreferrer" title="Click to open full size"><img src="${url}" loading="lazy" alt="${esc(a.filename || "attachment")}" class="mt-2 max-h-48 rounded-lg border border-slate-200 dark:border-slate-700" /></a>`;
+    }
+    if (mime === "application/pdf" || /\.pdf$/i.test(a.filename || "")) {
+      return `<div class="mt-2"><embed src="${url}" type="application/pdf" class="h-64 w-full rounded-lg border border-slate-200 dark:border-slate-700" /><a href="${url}" target="_blank" rel="noopener noreferrer" class="mt-1 inline-block rounded-lg bg-violet-500/15 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-500/30 transition">${label}</a></div>`;
+    }
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="rounded-lg bg-violet-500/15 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-500/30 transition" title="${esc(mime || "file")} · ${fmtSize(a.size)} — opens in a new tab">${label}</a>`;
+  };
+  const attHTML = atts.length ? `<div class="mt-2 flex items-start gap-1.5 flex-wrap">${atts.map(attPreview).join("")}</div>` : "";
   const sum = (d && d.summary) || null;
   const sender = (d && d.sender_email) || it.sender_email || "";
   const dateMs = (d && d.internal_date_ms) || it.internal_date_ms;
