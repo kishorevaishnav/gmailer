@@ -157,7 +157,7 @@ def api_message(message_id: str):
             pass
 
     cached = store.load_message(message_id)
-    if cached and cached.get("summary"):
+    if cached and cached.get("summary") and cached.get("body_text"):
         safe_review(None)
         cached["from_cache"] = True
         return cached
@@ -170,7 +170,13 @@ def api_message(message_id: str):
         return cached
     service = require_service()
     msg = _run(gmail_service.get_full, service, message_id)
-    msg["summary"] = ai_summary.generate_summary(msg)
+    if cached and cached.get("summary"):
+        # Summary already local; only the body was missing — reuse it.
+        msg["summary"] = cached["summary"]
+        if cached.get("category") and not msg.get("category"):
+            msg["category"] = cached["category"]
+    else:
+        msg["summary"] = ai_summary.generate_summary(msg)
     store.save_message(msg)
     safe_review(service)
     return msg
