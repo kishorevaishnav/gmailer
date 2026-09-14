@@ -256,6 +256,46 @@ def load_message(message_id: str) -> dict | None:
     return msg
 
 
+def list_messages(limit: int = 500, offset: int = 0) -> list[dict]:
+    """Return every cached message (DB-backed, no Gmail/OAuth needed).
+
+    Same per-message shape as load_message. Used by the local email viewer
+    so it can render real cached data without an authenticated session.
+    """
+    out: list[dict] = []
+    try:
+        with _lock:
+            rows = _get().execute(
+                "SELECT * FROM messages ORDER BY internal_date_ms DESC "
+                "LIMIT ? OFFSET ?",
+                (int(limit), int(offset)),
+            ).fetchall()
+    except Exception as exc:
+        logger.warning("store.list_messages failed: %s", exc)
+        return out
+    for row in rows:
+        msg = {
+            "id": row["id"],
+            "sender_name": row["sender_name"],
+            "sender_email": row["sender_email"],
+            "subject": row["subject"],
+            "snippet": row["snippet"],
+            "internal_date_ms": row["internal_date_ms"],
+            "label_ids": json.loads(row["label_ids"] or "[]"),
+            "promo": bool(row["promo"]),
+            "body_text": row["body_text"] or "",
+            "body_truncated": bool(row["body_truncated"]),
+            "category": row["category"],
+        }
+        if row["summary"]:
+            try:
+                msg["summary"] = json.loads(row["summary"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        out.append(msg)
+    return out
+
+
 def load_summary(message_id: str) -> dict | None:
     """Fast path: just the cached summary, if any."""
     try:

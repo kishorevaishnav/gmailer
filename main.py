@@ -178,6 +178,18 @@ def api_cache_clear():
     return {"ok": True, "cleared": cleared}
 
 
+# --- Local DB viewer (no OAuth required) --------------------------------------
+# Read-only listing of every cached message, so the local email viewer can
+# render real data straight from the SQLite cache without an auth session.
+
+@app.get("/api/messages")
+def api_messages(limit: int = 500, offset: int = 0):
+    limit = max(1, min(int(limit), 2000))
+    offset = max(0, int(offset))
+    items = store.list_messages(limit=limit, offset=offset)
+    return {"items": items, "count": len(items), "total": store.cache_count()}
+
+
 # --- Skipped-for-now ---------------------------------------------------------
 
 class SkipAddRequest(BaseModel):
@@ -624,3 +636,8 @@ async def no_cache_static(request, call_next):
 @app.get("/", include_in_schema=False)
 def index():
     return FileResponse(config.STATIC_DIR / "index.html")
+
+
+@app.get("/email-viewer", include_in_schema=False)
+def email_viewer():
+    return FileResponse(config.STATIC_DIR / "email-viewer.html")
