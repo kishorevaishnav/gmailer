@@ -81,6 +81,7 @@ const state = {
   emails: [],          // normalized viewer items
   categories: [],      // from /api/categories
   domainSummaries: {}, // { domain: { summary, totalEmails } }
+  busyDomains: new Set(),
   loading: true,
   error: null,
 };
@@ -137,6 +138,42 @@ function buildDomainSummaries() {
     out[dom] = { summary: overview, totalEmails: items.length };
   }
   return out;
+}
+
+async function deleteDomainEmails(domain) {
+  const affected = state.emails.filter((e) => e.domain === domain);
+  if (!affected.length) return;
+  const confirmMsg = affected.length === 1
+    ? `Delete 1 email from ${domain}? It moves to Gmail trash (30-day recovery) and is removed from this view.`
+    : `Delete all ${affected.length} emails from ${domain}? They move to Gmail trash (30-day recovery) and are removed from this view.`;
+  if (!window.confirm(confirmMsg)) return;
+
+  const ids = affected.map((e) => e.id);
+  const failIds = new Set();
+  state.busyDomains.add(domain);
+  renderDomainList();
+  try {
+    const res = await api(`/api/domains/${encodeURIComponent(domain)}/trash`, {
+      method: "POST",
+      body: JSON.stringify({ message_ids: ids }),
+    });
+    (res.failed || []).forEach((id) => failIds.add(id));
+    state.emails = state.emails.filter((e) => e.domain !== domain || failIds.has(e.id));
+    state.domainSummaries = buildDomainSummaries();
+    if (state.activeEmailId && !state.emails.some((e) => e.id === state.activeEmailId)) {
+      state.activeEmailId = null;
+    }
+    state.expandedDomains.delete(domain);
+    const ok = ids.length - failIds.size;
+    if (ok > 0) toast(`Deleted ${ok} email${ok === 1 ? "" : "s"} from ${domain} · synced to Gmail`, "ok");
+    if (failIds.size) toast(`${failIds.size} email${failIds.size === 1 ? "" : "s"} failed — kept in view. Retry.`, "err");
+    renderAll();
+  } catch (err) {
+    toast(`Delete failed: ${err.message}`, "err");
+    renderDomainList();
+  } finally {
+    state.busyDomains.delete(domain);
+  }
 }
 
 /* ───────────────────────────── Icons (Lucide-style inline SVGs) ───── */
@@ -234,6 +271,13 @@ function renderDomainList() {
       renderDomainList();
     })
   );
+  list?.querySelectorAll("[data-del-domain]").forEach((btn) =>
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const domain = btn.dataset.delDomain;
+      await deleteDomainEmails(domain);
+    })
+  );
   list?.querySelectorAll("[data-email-id]").forEach((row) =>
     row.addEventListener("click", () => {
       state.activeEmailId = row.dataset.emailId;
@@ -246,6 +290,7 @@ function domainCard(domain, items) {
   const expanded = state.expandedDomains.has(domain);
   const ds = (state.domainSummaries || {})[domain];
   const count = items.length;
+  const busy = state.busyDomains.has(domain);
 
   let body = "";
   if (expanded) {
@@ -269,14 +314,22 @@ function domainCard(domain, items) {
 
   return `
     <div class="domain-card" aria-expanded="${expanded ? "true" : "false"}">
-      <button type="button" data-toggle-domain="${esc(domain)}"
-        class="w-full flex items-center gap-2 px-3 py-2 text-left">
-        ${I.chevron(expanded)}
-        ${I.folder()}
-        <span class="min-w-0 flex-1 text-[13px] font-semibold text-slate-800 truncate">${esc(domain)}</span>
-        <span class="ai-badge rounded px-1.5 py-0.5 text-[10px] font-bold">AI</span>
-        <span class="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">${count}</span>
-      </button>
+      <div class="flex items-center gap-1 pr-2">
+        <button type="button" data-toggle-domain="${esc(domain)}"
+          class="min-w-0 flex-1 flex items-center gap-2 px-3 py-2 text-left">
+          ${I.chevron(expanded)}
+          ${I.folder()}
+          <span class="min-w-0 flex-1 text-[13px] font-semibold text-slate-800 truncate">${esc(domain)}</span>
+          <span class="ai-badge rounded px-1.5 py-0.5 text-[10px] font-bold">AI</span>
+          <span class="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">${count}</span>
+        </button>
+        <button type="button" data-del-domain="${esc(domain)}" ${busy ? "disabled" : ""}
+          class="domain-delete-btn shrink-0"
+          title="Delete all ${count} email${count === 1 ? "" : "s"} from ${esc(domain)} (moves to Gmail trash + removes from cache)">
+          ${busy ? I.spinner() : `<svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`}
+          ${busy ? "" : "Delete"}
+        </button>
+      </div>
       <div class="px-3 pb-3">${body}</div>
     </div>`;
 }
@@ -395,9 +448,9 @@ function setAllDomains(expand) {
 }
 
 /* ───────────────────────────── Toast ───── */
-function toast(msg) {
+function toast(msg, kind) {
   const t = document.createElement("div");
-  t.className = "toast";
+  t.className = `toast${kind === "err" ? " toast-err" : kind === "ok" ? " toast-ok" : ""}`;
   t.textContent = msg;
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 2200);
