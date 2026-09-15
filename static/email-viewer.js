@@ -167,6 +167,7 @@ async function deleteDomainEmails(domain) {
     const ok = ids.length - failIds.size;
     if (ok > 0) toast(`Deleted ${ok} email${ok === 1 ? "" : "s"} from ${domain} · synced to Gmail`, "ok");
     if (failIds.size) toast(`${failIds.size} email${failIds.size === 1 ? "" : "s"} failed — kept in view. Retry.`, "err");
+    state.busyDomains.delete(domain);
     renderAll();
   } catch (err) {
     toast(`Delete failed: ${err.message}`, "err");
