@@ -173,6 +173,7 @@ async function deleteDomainEmails(domain) {
     renderDomainList();
   } finally {
     state.busyDomains.delete(domain);
+    renderDomainList();
   }
 }
 
