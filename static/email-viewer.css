@@ -1,9 +1,47 @@
 /* ═══════════════════════════════════════════════════════════════
-   Email Viewer — high-contrast, low-color (slate/gray + indigo only)
+   Email Viewer — shadcn tokens + dark support (indigo accent kept)
    ═══════════════════════════════════════════════════════════════ */
 
 :root {
   --indigo: #4f46e5;
+  --background: 0 0% 100%;
+  --foreground: 240 10% 3.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 3.9%;
+  --primary: 262 83% 58%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 4.8% 95.9%;
+  --secondary-foreground: 240 5.9% 10%;
+  --muted: 240 4.8% 95.9%;
+  --muted-foreground: 240 3.8% 46.1%;
+  --accent: 240 4.8% 95.9%;
+  --accent-foreground: 240 5.9% 10%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 5.9% 90%;
+  --input: 240 5.9% 90%;
+  --ring: 262 83% 58%;
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: 240 10% 3.9%;
+  --foreground: 0 0% 98%;
+  --card: 240 10% 3.9%;
+  --card-foreground: 0 0% 98%;
+  --primary: 262 83% 58%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 3.7% 15.9%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
+  --accent: 240 3.7% 15.9%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 3.7% 15.9%;
+  --input: 240 3.7% 15.9%;
+  --ring: 262 83% 58%;
 }
 
 html, body { height: 100%; }
@@ -12,26 +50,26 @@ html, body { height: 100%; }
 #domainList::-webkit-scrollbar,
 #detailView::-webkit-scrollbar { width: 8px; }
 #domainList::-webkit-scrollbar-thumb,
-#detailView::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
+#detailView::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 8px; }
 #domainList::-webkit-scrollbar-track,
 #detailView::-webkit-scrollbar-track { background: transparent; }
 
 /* Domain group card */
 .domain-card {
-  border: 1px solid #e2e8f0;
+  border: 1px solid hsl(var(--border));
   border-radius: 10px;
-  background: #fff;
+  background: hsl(var(--card));
   transition: border-color .15s ease, box-shadow .15s ease;
 }
 .domain-card[aria-expanded="true"] {
-  border-color: #6366f1;
+  border-color: hsl(var(--ring));
   box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 20px rgba(79,70,229,.08);
 }
 
 /* Domain summary box — single-color, high readability */
 .domain-summary {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
   border-left: 3px solid #4f46e5;
   border-radius: 8px;
 }
@@ -44,8 +82,8 @@ html, body { height: 100%; }
 
 /* Email-level AI summary box — grayscale bordered */
 .email-ai-box {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
 }
 
@@ -56,6 +94,10 @@ html, body { height: 100%; }
   background-size: 400% 100%;
   animation: shimmer 1.2s ease infinite;
 }
+.dark .shimmer {
+  background: linear-gradient(90deg, #1e293b 25%, #28374d 37%, #1e293b 63%);
+  background-size: 400% 100%;
+}
 @keyframes shimmer {
   0%   { background-position: 100% 0; }
   100% { background-position: 0 0; }
@@ -63,28 +105,28 @@ html, body { height: 100%; }
 
 /* Category chip */
 .cat-chip {
-  border: 1px solid #cbd5e1;
-  background: #fff;
-  color: #475569;
+  border: 1px solid hsl(var(--input));
+  background: hsl(var(--card));
+  color: hsl(var(--muted-foreground));
 }
 .cat-chip[aria-pressed="true"] {
-  border-color: #4f46e5;
-  background: #eef2ff;
-  color: #3730a3;
+  border-color: hsl(var(--ring));
+  background: hsl(var(--primary) / .12);
+  color: hsl(var(--primary));
 }
 
 /* Email row */
 .email-row {
-  border: 1px solid #e2e8f0;
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
-  background: #fff;
+  background: hsl(var(--card));
   cursor: pointer;
   transition: border-color .12s ease, background .12s ease;
 }
-.email-row:hover { border-color: #94a3b8; background: #f8fafc; }
+.email-row:hover { border-color: hsl(var(--muted-foreground)); background: hsl(var(--muted)); }
 .email-row[aria-selected="true"] {
-  border-color: #4f46e5;
-  background: #eef2ff;
+  border-color: hsl(var(--ring));
+  background: hsl(var(--primary) / .12);
 }
 
 /* Collapse chevron rotation */
@@ -99,15 +141,66 @@ html, body { height: 100%; }
   left: 50%;
   transform: translateX(-50%);
   z-index: 50;
-  background: #fff;
-  border: 1px solid #e2e8f0;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
   box-shadow: 0 10px 25px rgba(0,0,0,.08);
   border-radius: 10px;
   padding: 10px 16px;
   font-size: 13px;
-  color: #0f172a;
+  color: hsl(var(--card-foreground));
 }
 @keyframes toast-in {
   from { transform: translate(-50%, 8px); opacity: 0; }
   to   { transform: translate(-50%, 0); opacity: 1; }
 }
+
+.dark .domain-summary,
+.dark .email-ai-box { background: hsl(var(--muted)); border-color: hsl(var(--border)); }
+.dark .email-row p,
+.dark .domain-summary p,
+.dark .email-ai-box p { color: hsl(var(--muted-foreground)); }
+.dark .email-row {
+  background: hsl(var(--card));
+  border-color: hsl(var(--border));
+}
+.dark .email-row:hover { background: hsl(var(--muted)); border-color: hsl(var(--muted-foreground)); }
+.dark .email-row[aria-selected="true"] {
+  background: hsl(var(--primary) / .12);
+  border-color: hsl(var(--ring));
+}
+.dark .cat-chip {
+  background: hsl(var(--card));
+  border-color: hsl(var(--input));
+  color: hsl(var(--muted-foreground));
+}
+.dark .cat-chip[aria-pressed="true"] {
+  background: hsl(var(--primary) / .12);
+  border-color: hsl(var(--ring));
+  color: hsl(var(--primary));
+}
+.dark .toast {
+  background: hsl(var(--card));
+  border-color: hsl(var(--border));
+  color: hsl(var(--card-foreground));
+}
+.dark .shimmer {
+  background: linear-gradient(90deg, #1e293b 25%, #28374d 37%, #1e293b 63%);
+  background-size: 400% 100%;
+}
+
+.domain-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 9999px;
+  border: 1px solid hsl(var(--destructive) / .35);
+  background: hsl(var(--destructive) / .1);
+  color: hsl(var(--destructive));
+  padding: 2px 9px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color .15s ease, opacity .15s ease;
+}
+.domain-delete-btn:hover:not(:disabled) { background: hsl(var(--destructive)); color: #fff; }
+.domain-delete-btn:disabled { opacity: .5; cursor: not-allowed; }
