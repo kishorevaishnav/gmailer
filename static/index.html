@@ -19,11 +19,36 @@
   </script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
-    tailwind.config = { darkMode: "class" };
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            background: "hsl(var(--background))",
+            foreground: "hsl(var(--foreground))",
+            card: { DEFAULT: "hsl(var(--card))", foreground: "hsl(var(--card-foreground))" },
+            popover: { DEFAULT: "hsl(var(--popover))", foreground: "hsl(var(--popover-foreground))" },
+            primary: { DEFAULT: "hsl(var(--primary))", foreground: "hsl(var(--primary-foreground))" },
+            secondary: { DEFAULT: "hsl(var(--secondary))", foreground: "hsl(var(--secondary-foreground))" },
+            muted: { DEFAULT: "hsl(var(--muted))", foreground: "hsl(var(--muted-foreground))" },
+            accent: { DEFAULT: "hsl(var(--accent))", foreground: "hsl(var(--accent-foreground))" },
+            destructive: { DEFAULT: "hsl(var(--destructive))", foreground: "hsl(var(--destructive-foreground))" },
+            border: "hsl(var(--border))",
+            input: "hsl(var(--input))",
+            ring: "hsl(var(--ring))",
+          },
+          borderRadius: {
+            lg: "var(--radius)",
+            md: "calc(var(--radius) - 2px)",
+            sm: "calc(var(--radius) - 4px)",
+          },
+        },
+      },
+    };
   </script>
   <link rel="stylesheet" href="/static/app.css" />
 </head>
-<body class="bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100 h-screen w-screen overflow-hidden antialiased select-none">
+<body class="bg-background text-foreground h-screen w-screen overflow-hidden antialiased select-none">
 
   <!-- ═══════════════ AUTH SCREEN ═══════════════ -->
   <div id="authScreen" class="flex h-full flex-col items-center justify-center gap-6">
@@ -34,7 +59,7 @@
         </svg>
       </div>
       <h1 class="text-4xl font-black tracking-tight">Gmailer</h1>
-      <p class="text-slate-600 dark:text-slate-400 text-sm max-w-sm text-center">
+      <p class="text-muted-foreground text-sm max-w-sm text-center">
         Mass-triage your inbox at keyboard speed. Delete, archive, and star
         hundreds of emails without touching the mouse.
       </p>
@@ -54,88 +79,88 @@
       <p id="authErrorText" class="text-red-600/80 dark:text-red-200/80 font-mono break-all"></p>
     </div>
 
-    <button id="authBtn" class="hidden rounded-xl bg-slate-100 px-8 py-3.5 text-base font-bold text-slate-900 transition hover:bg-white hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-slate-900/40 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700">
+    <button id="authBtn" class="hidden btn btn-outline rounded-xl px-8 py-3.5 text-base font-bold transition hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-slate-900/40">
       Sign in with Google
     </button>
   </div>
 
   <!-- ═══════════════ LOADING SCREEN ═══════════════ -->
   <div id="loadingScreen" class="hidden h-full flex-col items-center justify-center gap-4">
-    <div class="h-10 w-10 rounded-full border-4 border-slate-300 dark:border-slate-800 border-t-red-500 animate-spin"></div>
-    <p id="loadingText" class="text-sm text-slate-600 dark:text-slate-400">Loading your inbox…</p>
+    <div class="h-10 w-10 rounded-full border-4 border-border border-t-red-500 animate-spin"></div>
+    <p id="loadingText" class="text-sm text-muted-foreground">Loading your inbox…</p>
   </div>
 
   <!-- ═══════════════ MAIN APP ═══════════════ -->
   <div id="app" class="hidden h-full flex">
 
     <!-- ─────────── Sidebar ─────────── -->
-    <aside class="w-[300px] shrink-0 flex flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/70">
-      <header class="flex items-center gap-2 px-5 py-4 border-b border-slate-200 dark:border-slate-800">
+    <aside class="w-[300px] shrink-0 flex flex-col border-r border-border bg-card">
+      <header class="flex items-center gap-2 px-5 py-4 border-b border-border">
         <div class="h-8 w-8 rounded-lg bg-gradient-to-br from-red-500 to-rose-600 grid place-items-center">
           <svg viewBox="0 0 24 24" class="h-5 w-5 fill-white" aria-hidden="true">
             <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4-8 5-8-5V6l8 5 8-5v2z"/>
           </svg>
         </div>
         <span class="text-lg font-bold tracking-tight">Gmailer</span>
-        <button id="logoutBtn" class="ml-auto text-[11px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition" title="Sign out">Sign out</button>
+        <button id="logoutBtn" class="ml-auto text-[11px] text-muted-foreground hover:text-foreground transition" title="Sign out">Sign out</button>
       </header>
 
-      <div class="px-5 py-5 border-b border-slate-200 dark:border-slate-800">
+      <div class="px-5 py-5 border-b border-border">
         <div id="remainCount" class="text-3xl font-black tabular-nums leading-none tracking-tight">—</div>
-        <div id="remainSub" class="mt-1 text-sm text-slate-600 dark:text-slate-400">emails left</div>
-        <div class="mt-3 h-1.5 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+        <div id="remainSub" class="mt-1 text-sm text-muted-foreground">emails left</div>
+        <div class="mt-3 h-1.5 w-full rounded-full bg-muted overflow-hidden">
           <div id="progressFill" class="h-full w-0 rounded-full bg-gradient-to-r from-red-500 to-rose-400 transition-all duration-300"></div>
         </div>
-        <div id="queueMeta" class="mt-2 text-[11px] text-slate-600 dark:text-slate-500"></div>
-        <div id="cacheInfo" class="mt-1 text-[10px] text-slate-500 dark:text-slate-600"></div>
-        <button id="skippedBtn" class="mt-2 hidden rounded-lg border border-slate-300 px-2 py-1 text-[11px] text-slate-600 transition hover:border-violet-500/60 hover:text-violet-700 dark:border-slate-700 dark:text-slate-300 dark:hover:text-violet-300">
+        <div id="queueMeta" class="mt-2 text-[11px] text-muted-foreground"></div>
+        <div id="cacheInfo" class="mt-1 text-[10px] text-muted-foreground"></div>
+        <button id="skippedBtn" class="mt-2 hidden btn btn-outline px-2 py-1 text-[11px] transition hover:border-violet-500/60 hover:text-violet-700 dark:hover:text-violet-300">
           Skipped: <span id="skippedCount">0</span> · bring back
         </button>
         <ul id="skippedList" class="mt-2 hidden space-y-1"></ul>
       </div>
 
-      <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex-1 min-h-0 overflow-y-auto">
+      <div class="px-5 py-4 border-b border-border flex-1 min-h-0 overflow-y-auto">
         <div class="flex items-center justify-between mb-3">
           <div class="flex items-center gap-1">
             <button id="viewSendersBtn" class="rounded-md px-2 py-1 text-[10px] font-bold transition" title="Group emails by sender">Senders</button>
             <button id="viewCatsBtn" class="rounded-md px-2 py-1 text-[10px] font-bold transition" title="Group emails by category">Categories</button>
           </div>
           <div class="flex items-center gap-1.5">
-            <span id="groupsCount" class="text-[10px] text-slate-500 dark:text-slate-600"></span>
-            <button id="remapCatsBtn" class="rounded-md border border-slate-300 dark:border-slate-700 px-2 py-1 text-[10px] font-bold text-slate-500 dark:text-slate-400 hover:border-violet-500/60 hover:text-violet-600 dark:hover:text-violet-300 transition" title="Re-run categorization on cached emails">↻ Remap</button>
+            <span id="groupsCount" class="text-[10px] text-muted-foreground"></span>
+            <button id="remapCatsBtn" class="rounded-md border border-border px-2 py-1 text-[10px] font-bold text-muted-foreground hover:border-violet-500/60 hover:text-violet-600 dark:hover:text-violet-300 transition" title="Re-run categorization on cached emails">↻ Remap</button>
           </div>
         </div>
         <ul id="groupList" class="space-y-2"></ul>
       </div>
 
-      <div class="px-5 py-4 border-t border-slate-200 dark:border-slate-800 mt-auto">
-        <div class="text-[11px] font-bold uppercase tracking-widest text-slate-600 dark:text-slate-500 mb-3">RecentActions</div>
+      <div class="px-5 py-4 border-t border-border mt-auto">
+        <div class="text-[11px] font-bold uppercase tracking-widest text-muted-foreground mb-3">RecentActions</div>
         <div id="historyList" class="space-y-2"></div>
       </div>
     </aside>
 
     <!-- ─────────── Main viewport ─────────── -->
     <main class="flex-1 flex flex-col min-w-0">
-      <header class="h-12 shrink-0 flex items-center gap-4 px-5 border-b border-slate-200 bg-white/70 dark:border-slate-800 dark:bg-slate-900/40">
-        <span class="text-xs text-slate-600 dark:text-slate-500 font-mono">
-          <span id="position" class="text-slate-800 dark:text-slate-300 font-bold">0</span> /
+      <header class="h-12 shrink-0 flex items-center gap-4 px-5 border-b border-border bg-card/70">
+        <span class="text-xs text-muted-foreground font-mono">
+          <span id="position" class="text-foreground font-bold">0</span> /
           <span id="positionTotal">0</span> in queue
         </span>
-        <span id="userChip" class="text-xs text-slate-600 dark:text-slate-500"></span>
+        <span id="userChip" class="text-xs text-muted-foreground"></span>
         <div class="ml-auto flex items-center gap-2">
-          <input id="searchInput" type="text" placeholder="Search subject / body… ( / )" autocomplete="off" spellcheck="false" class="w-40 focus:w-60 transition-all rounded-lg border border-slate-300 dark:border-slate-700 bg-transparent px-2.5 py-1.5 text-xs text-slate-700 dark:text-slate-200 placeholder:text-slate-400 focus:border-violet-500 focus:outline-none" />
-          <a href="/rules" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 dark:border-slate-700 dark:text-slate-300 hover:border-violet-500/60 hover:text-violet-700 dark:hover:text-violet-300 transition" title="Open the dedicated Rules CRUD page">Rules</a>
-          <a href="/todos" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 dark:border-slate-700 dark:text-slate-300 hover:border-sky-500/60 hover:text-sky-700 dark:hover:text-sky-300 transition" title="Open your TODO list">Todo <span id="todoCount"></span></a>
-          <button id="themeBtn" class="rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 transition hover:border-slate-400 dark:hover:border-slate-500" title="Toggle theme">
-            <svg id="themeIconMoon" class="h-4 w-4 text-slate-600 dark:text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
-            <svg id="themeIconSun" class="hidden h-4 w-4 text-slate-600 dark:text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-            <svg id="themeIconApple" class="hidden h-4 w-4 text-slate-600 dark:text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18 9 9 0 0 0 0-18z" fill="currentColor" stroke="none"/></svg>
+          <input id="searchInput" type="text" placeholder="Search subject / body… ( / )" autocomplete="off" spellcheck="false" class="w-40 focus:w-60 transition-all input text-xs text-foreground placeholder:text-muted-foreground focus:border-violet-500 focus:outline-none" />
+          <a href="/rules" class="btn btn-outline text-xs hover:border-violet-500/60 hover:text-violet-700 dark:hover:text-violet-300 transition" title="Open the dedicated Rules CRUD page">Rules</a>
+          <a href="/todos" class="btn btn-outline text-xs hover:border-sky-500/60 hover:text-sky-700 dark:hover:text-sky-300 transition" title="Open your TODO list">Todo <span id="todoCount"></span></a>
+          <button id="themeBtn" class="btn btn-outline p-2 transition" title="Toggle theme">
+            <svg id="themeIconMoon" class="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+            <svg id="themeIconSun" class="hidden h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+            <svg id="themeIconApple" class="hidden h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18 9 9 0 0 0 0-18z" fill="currentColor" stroke="none"/></svg>
           </button>
-          <button id="undoTopBtn" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 dark:border-slate-700 dark:text-slate-300 hover:border-violet-500/60 hover:text-violet-700 dark:hover:text-violet-300 transition" title="Undo last action (U)">↩ Undo</button>
-          <button id="clearCacheBtn" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 dark:border-slate-700 dark:text-slate-300 hover:border-amber-500/60 hover:text-amber-700 dark:hover:text-amber-300 transition" title="Drop local cache — next load re-fetches everything from Gmail">Clear cache</button>
-          <button id="skipForNowBtn" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 dark:border-slate-700 dark:text-slate-300 hover:border-violet-500/60 hover:text-violet-700 dark:hover:text-violet-300 transition" title="Skip for now — hide this email until you bring it back (X)">Skip for now</button>
-          <button id="loadMoreBtn" class="hidden rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 dark:border-slate-700 dark:text-slate-300 hover:border-slate-500 transition" title="Pull the next 200 unread emails into the queue">Next 200</button>
-          <button id="reloadBtn" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 dark:border-slate-700 dark:text-slate-300 hover:border-slate-500 transition" title="Reload inbox">↻ Reload</button>
+          <button id="undoTopBtn" class="btn btn-outline text-xs hover:border-violet-500/60 hover:text-violet-700 dark:hover:text-violet-300 transition" title="Undo last action (U)">↩ Undo</button>
+          <button id="clearCacheBtn" class="btn btn-outline text-xs hover:border-amber-500/60 hover:text-amber-700 dark:hover:text-amber-300 transition" title="Drop local cache — next load re-fetches everything from Gmail">Clear cache</button>
+          <button id="skipForNowBtn" class="btn btn-outline text-xs hover:border-violet-500/60 hover:text-violet-700 dark:hover:text-violet-300 transition" title="Skip for now — hide this email until you bring it back (X)">Skip for now</button>
+          <button id="loadMoreBtn" class="hidden btn btn-outline text-xs transition" title="Pull the next 200 unread emails into the queue">Next 200</button>
+          <button id="reloadBtn" class="btn btn-outline text-xs transition" title="Reload inbox">↻ Reload</button>
         </div>
       </header>
 
@@ -157,13 +182,13 @@
 
         <!-- Editor view (replaces normal view) -->
         <div id="editorView" class="hidden flex-1 flex flex-col min-h-0">
-          <header class="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-slate-200 dark:border-slate-800">
-            <span id="editorTitle" class="text-sm font-bold text-slate-800 dark:text-slate-200 truncate max-w-xs">New Rule</span>
-            <label class="flex items-center gap-1.5 text-[11px] text-slate-600 dark:text-slate-400 cursor-pointer ml-2">
+          <header class="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-border">
+            <span id="editorTitle" class="text-sm font-bold text-foreground truncate max-w-xs">New Rule</span>
+            <label class="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer ml-2">
               <input id="editorApplyNow" type="checkbox" class="accent-violet-600 rounded"> Apply now
             </label>
             <div class="ml-auto flex items-center gap-2">
-              <button id="editorCancel" class="rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:border-slate-400 transition">Cancel</button>
+              <button id="editorCancel" class="btn btn-outline text-xs transition">Cancel</button>
               <button id="editorSave" class="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-violet-700 transition">Save</button>
               <button id="editorDelete" class="hidden rounded-lg bg-red-500/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-600 transition">Delete</button>
             </div>
@@ -171,7 +196,7 @@
           <div class="flex-1 min-h-0 flex">
             <div class="flex-1 p-6 overflow-auto">
               <pre id="editorErrors" class="hidden mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-[11px] text-red-700 dark:text-red-300 font-mono whitespace-pre-wrap"></pre>
-              <textarea id="editorContent" class="w-full h-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 text-[13px] font-mono text-slate-800 dark:text-slate-200 resize-none focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500/30" spellcheck="false"></textarea>
+              <textarea id="editorContent" class="w-full h-full rounded-lg border border-border bg-card p-4 text-[13px] font-mono text-foreground resize-none focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500/30" spellcheck="false"></textarea>
             </div>
           </div>
         </div>
@@ -181,14 +206,14 @@
 
   <!-- ─────────── Todo date prompt ─────────── -->
   <div id="todoModal" class="hidden fixed inset-0 z-50 items-center justify-center bg-slate-950/60 p-4">
-    <div class="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+    <div class="w-full max-w-sm rounded-2xl border border-border bg-card p-5 shadow-2xl">
       <h3 class="text-sm font-bold">Add to TODO + Google Task</h3>
-      <p id="todoModalSub" class="mt-1 truncate text-xs text-slate-500"></p>
-      <label class="mt-3 block text-[11px] text-slate-500">Due date (optional)
-        <input id="todoDueInput" type="date" class="mt-1 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-transparent px-2.5 py-2 text-sm text-slate-800 dark:text-slate-200 focus:border-sky-500 focus:outline-none" />
+      <p id="todoModalSub" class="mt-1 truncate text-xs text-muted-foreground"></p>
+      <label class="mt-3 block text-[11px] text-muted-foreground">Due date (optional)
+        <input id="todoDueInput" type="date" class="mt-1 w-full input text-sm text-foreground focus:border-sky-500 focus:outline-none" />
       </label>
       <div class="mt-4 flex justify-end gap-2">
-        <button id="todoModalCancel" class="rounded-lg border border-slate-300 dark:border-slate-700 px-4 py-2 text-xs hover:border-slate-500 transition">Cancel</button>
+        <button id="todoModalCancel" class="btn btn-outline text-xs transition">Cancel</button>
         <button id="todoModalSave" class="rounded-lg bg-sky-600 px-4 py-2 text-xs font-bold text-white hover:bg-sky-700 transition">Add task</button>
       </div>
     </div>
@@ -196,18 +221,18 @@
 
   <!-- ─────────── Category picker ─────────── -->
   <div id="recatModal" class="hidden fixed inset-0 z-50 items-center justify-center bg-slate-950/60 p-4">
-    <div class="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+    <div class="w-full max-w-sm rounded-2xl border border-border bg-card p-5 shadow-2xl">
       <h3 class="text-sm font-bold">Set category</h3>
-      <p id="recatModalSub" class="mt-1 truncate text-xs text-slate-500"></p>
-      <label class="mt-3 block text-[11px] text-slate-500">Category
-        <select id="recatSelect" class="mt-1 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-transparent px-2.5 py-2 text-sm text-slate-800 dark:text-slate-200 focus:border-violet-500 focus:outline-none"></select>
+      <p id="recatModalSub" class="mt-1 truncate text-xs text-muted-foreground"></p>
+      <label class="mt-3 block text-[11px] text-muted-foreground">Category
+        <select id="recatSelect" class="mt-1 w-full input text-sm text-foreground focus:border-violet-500 focus:outline-none"></select>
       </label>
-      <label class="mt-3 block text-[11px] text-slate-500">Why — only apply to future mail with this in the subject (optional, comma = any)
-        <input id="recatReason" type="text" placeholder="e.g. statement, invoice" class="mt-1 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-transparent px-2.5 py-2 text-xs focus:border-violet-500 focus:outline-none" />
+      <label class="mt-3 block text-[11px] text-muted-foreground">Why — only apply to future mail with this in the subject (optional, comma = any)
+        <input id="recatReason" type="text" placeholder="e.g. statement, invoice" class="mt-1 w-full input text-xs text-foreground focus:border-violet-500 focus:outline-none" />
       </label>
-      <p class="mt-2 text-[10px] text-slate-400">Saving locks your choice — bulk Remap will skip it. Auto re-evaluates and unlocks.</p>
+      <p class="mt-2 text-[10px] text-muted-foreground">Saving locks your choice — bulk Remap will skip it. Auto re-evaluates and unlocks.</p>
       <div class="mt-4 flex justify-end gap-2">
-        <button id="recatModalCancel" class="rounded-lg border border-slate-300 dark:border-slate-700 px-4 py-2 text-xs hover:border-slate-500 transition">Cancel</button>
+        <button id="recatModalCancel" class="btn btn-outline text-xs transition">Cancel</button>
         <button id="recatModalAuto" class="rounded-lg border border-violet-500/40 px-4 py-2 text-xs font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-500/10 transition">Auto</button>
         <button id="recatModalSave" class="rounded-lg bg-violet-600 px-4 py-2 text-xs font-bold text-white hover:bg-violet-700 transition">Save</button>
       </div>
@@ -217,12 +242,12 @@
   <!-- ─────────── Toasts ─────────── -->
   <div id="toasts" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 items-center pointer-events-none"></div>
 
-  <div id="emptyScreen" class="hidden h-screen w-screen flex-col items-center justify-center gap-4 bg-slate-100 dark:bg-slate-950">
+  <div id="emptyScreen" class="hidden h-screen w-screen flex-col items-center justify-center gap-4 bg-background">
     <div class="text-7xl">✓</div>
     <p class="text-2xl font-black tracking-tight">Inbox clear. Nice work.</p>
-    <p id="emptyStat" class="text-sm text-slate-600 dark:text-slate-500"></p>
+    <p id="emptyStat" class="text-sm text-muted-foreground"></p>
     <button id="skippedRestoreBtn" class="hidden mt-2 rounded-xl bg-violet-500/90 px-6 py-3 font-bold text-white hover:bg-violet-500 transition"></button>
-    <button id="emptyReload" class="mt-2 rounded-xl bg-slate-100 dark:bg-slate-800 px-6 py-3 font-bold text-slate-900 dark:text-slate-100 hover:bg-white dark:hover:bg-slate-700 transition">Load more unread</button>
+    <button id="emptyReload" class="mt-2 btn btn-outline rounded-xl px-6 py-3 font-bold transition">Load more unread</button>
   </div>
 
   <script src="/static/app.js"></script>
