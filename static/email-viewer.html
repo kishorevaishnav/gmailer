@@ -4,48 +4,110 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Email Viewer — Domain Grouped</title>
+  <script>
+    (function () {
+      try {
+        var q = new URLSearchParams(window.location.search).get("theme");
+        var t = q || localStorage.getItem("gmailer-theme") || "dark";
+        if (t === "apple") {
+          document.documentElement.setAttribute("data-theme", "apple");
+        } else if (t !== "light") {
+          document.documentElement.classList.add("dark");
+        }
+      } catch (e) {}
+    })();
+  </script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
-    tailwind.config = { darkMode: "class" };
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            background: "hsl(var(--background))",
+            foreground: "hsl(var(--foreground))",
+            card: { DEFAULT: "hsl(var(--card))", foreground: "hsl(var(--card-foreground))" },
+            popover: { DEFAULT: "hsl(var(--popover))", foreground: "hsl(var(--popover-foreground))" },
+            primary: { DEFAULT: "hsl(var(--primary))", foreground: "hsl(var(--primary-foreground))" },
+            secondary: { DEFAULT: "hsl(var(--secondary))", foreground: "hsl(var(--secondary-foreground))" },
+            muted: { DEFAULT: "hsl(var(--muted))", foreground: "hsl(var(--muted-foreground))" },
+            accent: { DEFAULT: "hsl(var(--accent))", foreground: "hsl(var(--accent-foreground))" },
+            destructive: { DEFAULT: "hsl(var(--destructive))", foreground: "hsl(var(--destructive-foreground))" },
+            border: "hsl(var(--border))",
+            input: "hsl(var(--input))",
+            ring: "hsl(var(--ring))",
+          },
+          borderRadius: {
+            lg: "var(--radius)",
+            md: "calc(var(--radius) - 2px)",
+            sm: "calc(var(--radius) - 4px)",
+          },
+        },
+      },
+    };
   </script>
   <link rel="stylesheet" href="/static/email-viewer.css" />
 </head>
-<body class="bg-slate-50 text-slate-900 h-screen w-screen overflow-hidden flex flex-col antialiased">
+<body class="bg-background text-foreground h-screen w-screen overflow-hidden flex flex-col antialiased">
 
-  <header class="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-slate-200 bg-white">
+  <header class="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-border bg-card">
     <svg viewBox="0 0 24 24" class="h-6 w-6 text-slate-800" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
     </svg>
     <div class="min-w-0">
-      <h1 class="text-base font-bold tracking-tight text-slate-900 truncate">Email Viewer</h1>
-      <p class="text-[11px] text-slate-500 truncate">Categorized · domain-grouped · AI summarized</p>
+      <h1 class="text-base font-bold tracking-tight text-foreground truncate">Email Viewer</h1>
+      <p class="text-[11px] text-muted-foreground truncate">Categorized · domain-grouped · AI summarized</p>
     </div>
     <div class="ml-auto flex items-center gap-2">
-      <span id="debugStatus" class="text-[10px] font-mono text-slate-400"></span>
-      <span id="resultCount" class="text-[11px] text-slate-500 font-mono"></span>
-      <button id="selectAllBtn" class="rounded-lg border border-slate-300 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 transition">Expand all</button>
+      <span id="debugStatus" class="text-[10px] font-mono text-muted-foreground"></span>
+      <span id="resultCount" class="text-[11px] text-muted-foreground font-mono"></span>
+      <button id="selectAllBtn" class="btn btn-outline text-[11px]">Expand all</button>
+      <button id="themeBtn" class="btn btn-outline px-2.5 py-1.5" title="Theme: current — click to switch">
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
+        </svg>
+      </button>
     </div>
   </header>
 
-  <div class="shrink-0 flex items-center gap-2 px-5 py-2 border-b border-slate-200 bg-white overflow-x-auto">
-    <span class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mr-1 shrink-0">Filter</span>
+  <div class="shrink-0 flex items-center gap-2 px-5 py-2 border-b border-border bg-card overflow-x-auto">
+    <span class="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mr-1 shrink-0">Filter</span>
     <div id="categoryChips" class="flex items-center gap-1.5"></div>
   </div>
 
   <div class="flex-1 min-h-0 flex">
-    <aside class="w-[380px] shrink-0 flex flex-col border-r border-slate-200 bg-white overflow-hidden">
+    <aside class="w-[380px] shrink-0 flex flex-col border-r border-border bg-card overflow-hidden">
       <div class="shrink-0 flex items-center justify-between px-4 py-2 border-b border-slate-100">
-        <span class="text-[11px] font-bold uppercase tracking-widest text-slate-500">Domains</span>
-        <span id="domainCount" class="text-[10px] text-slate-400 font-mono"></span>
+        <span class="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Domains</span>
+        <span id="domainCount" class="text-[10px] text-muted-foreground font-mono"></span>
       </div>
       <div id="domainList" class="flex-1 min-h-0 overflow-y-auto p-3 space-y-2"></div>
     </aside>
-    <main class="flex-1 min-w-0 flex flex-col bg-slate-50 overflow-hidden">
+    <main class="flex-1 min-w-0 flex flex-col bg-background overflow-hidden">
       <div id="detailView" class="flex-1 min-h-0 overflow-y-auto"></div>
     </main>
   </div>
 
   <script src="/static/email-viewer.js"></script>
+  <script>
+    (function () {
+      var themes = ["dark", "light", "apple"];
+      var btn = document.getElementById("themeBtn");
+      if (!btn) return;
+      function cur() {
+        if (document.documentElement.classList.contains("dark")) return "dark";
+        if (document.documentElement.getAttribute("data-theme") === "apple") return "apple";
+        return "light";
+      }
+      btn.addEventListener("click", function () {
+        var next = themes[(themes.indexOf(cur()) + 1) % themes.length];
+        document.documentElement.classList.toggle("dark", next === "dark");
+        if (next === "apple") document.documentElement.setAttribute("data-theme", "apple");
+        else document.documentElement.removeAttribute("data-theme");
+        try { localStorage.setItem("gmailer-theme", next); } catch (e) {}
+      });
+    })();
+  </script>
   <script src="/static/dev-reload.js"></script>
 </body>
 </html>
