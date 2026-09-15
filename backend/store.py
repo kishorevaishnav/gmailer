@@ -415,6 +415,25 @@ def list_messages(limit: int = 500, offset: int = 0) -> list[dict]:
     return out
 
 
+def remove_messages(message_ids: list[str]) -> int:
+    """Delete the given message ids from the local messages cache.
+    Returns number of rows removed."""
+    if not message_ids:
+        return 0
+    try:
+        placeholders = ",".join("?" for _ in message_ids)
+        with _lock:
+            cur = _get().execute(
+                f"DELETE FROM messages WHERE id IN ({placeholders})",
+                tuple(message_ids),
+            )
+            _get().commit()
+        return cur.rowcount
+    except Exception as exc:
+        logger.warning("store.remove_messages failed: %s", exc)
+        return 0
+
+
 def save_attachments(message_id: str, attachments: list[dict]) -> None:
     try:
         with _lock:
