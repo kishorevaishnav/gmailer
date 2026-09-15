@@ -1002,6 +1002,25 @@ def api_bundle_archive(sender_key: str, req: BulkRequest):
     return _run_bulk(service, gmail_service.archive, req, "archive")
 
 
+@app.post("/api/domains/{domain}/trash")
+def api_domain_trash(domain: str, req: BulkRequest):
+    service = require_service()
+    if not req.message_ids:
+        raise HTTPException(status_code=400, detail="No message_ids provided")
+    failed = _run(gmail_service.bulk_execute, service, req.message_ids, gmail_service.trash)
+    for mid in req.message_ids:
+        if mid not in failed:
+            _record_trace(service, mid, "trashed")
+    removed = store.remove_messages([mid for mid in req.message_ids if mid not in failed])
+    return {
+        "ok": True,
+        "processed": len(req.message_ids) - len(failed),
+        "failed": failed,
+        "removed_from_cache": removed,
+        "undo": {"action": "trash", "message_ids": req.message_ids},
+    }
+
+
 # --- Undo ---------------------------------------------------------------------
 
 class UndoRequest(BaseModel):
