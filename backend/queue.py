@@ -11,6 +11,9 @@ from .gmail_service import get_metadata_batch, list_unread_page
 def _bundle_key(item: dict) -> str:
     email = (item.get("sender_email") or "").strip().lower()
     if email:
+        domain = email.rsplit("@", 1)[-1] if "@" in email else ""
+        if domain and ("lists." in domain or domain.startswith("list.") or ".lists." in domain):
+            return domain
         return email
     name = (item.get("sender_name") or "").strip().lower()
     return name or "unknown"

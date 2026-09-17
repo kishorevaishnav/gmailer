@@ -45,6 +45,7 @@ const state = {
   editorRuleId: null,      // rule being edited (null = new rule)
   editorMarkdown: "",      // current editor content
   editorApplyNow: false,
+  pendingSummCount: 0,     // emails currently being summarized in the background
 };
 
 /* ───────────────────────────── Elements ────────────────────────── */
@@ -66,7 +67,8 @@ const el = {
   userChip: $("userChip"), logoutBtn: $("logoutBtn"),
   themeBtn: $("themeBtn"), themeIconMoon: $("themeIconMoon"), themeIconSun: $("themeIconSun"), themeIconApple: $("themeIconApple"),
   position: $("position"), positionTotal: $("positionTotal"),
-  undoTopBtn: $("undoTopBtn"), reloadBtn: $("reloadBtn"), clearCacheBtn: $("clearCacheBtn"), todoCount: $("todoCount"), searchInput: $("searchInput"),
+  undoTopBtn: $("undoTopBtn"), reloadBtn: $("reloadBtn"), clearCacheBtn: $("clearCacheBtn"), todoCount: $("todoCount"),   searchInput: $("searchInput"),
+  summProgress: $("summProgress"),
   todoModal: $("todoModal"), todoModalSub: $("todoModalSub"), todoDueInput: $("todoDueInput"), todoModalCancel: $("todoModalCancel"), todoModalSave: $("todoModalSave"),
   recatModal: $("recatModal"), recatModalSub: $("recatModalSub"), recatSelect: $("recatSelect"), recatReason: $("recatReason"), recatModalCancel: $("recatModalCancel"), recatModalAuto: $("recatModalAuto"), recatModalSave: $("recatModalSave"),
   toasts: $("toasts"),
@@ -358,6 +360,26 @@ async function fetchDetail(id) {
   }
 }
 
+async function regenerateSummary(id) {
+  const it = state.queue.find((x) => x.id === id);
+  if (!it) return;
+  toast("Regenerating AI summary…", "info", { duration: 4000 });
+  try {
+    const res = await api(`/api/messages/${id}/summarize`, { method: "POST" });
+    if (res.summary) {
+      it.summary = res.summary;
+      state.detail.set(id, { ...state.detail.get(id), summary: res.summary });
+      state.expandedCardId = it.id;
+      renderSidebar();
+      renderGroupView();
+      setTimeout(refreshMainView, 100);
+      toast("Summary regenerated ✓", "ok", { duration: 2000 });
+    }
+  } catch (e) {
+    toast(`Regenerate failed: ${e.message}`, "err", { duration: 3000 });
+  }
+}
+
 function pumpDetail(d) {
   if (!d || !d.id) return;
   const it = state.queue.find((x) => x.id === d.id);
@@ -377,7 +399,7 @@ function pumpDetail(d) {
 let singleSummQueue = [];
 let singleSummInFlight = 0;
 let singleSummTimer = null;
-const SINGLE_SUMM_CONCURRENCY = 2;
+const SINGLE_SUMM_CONCURRENCY = 6;
 
 function scheduleSingleSummarize(ids) {
   for (const id of ids) {
@@ -387,8 +409,24 @@ function scheduleSingleSummarize(ids) {
     singleSummQueue.push(id);
   }
   if (singleSummQueue.length > 200) singleSummQueue.length = 200;
+  if (ids.length) {
+    state.pendingSummCount = Math.max(state.pendingSummCount, singleSummQueue.length);
+    renderSummarizeProgress();
+  }
   if (!singleSummTimer) {
     singleSummTimer = setTimeout(bumpSingleSummarize, 400);
+  }
+}
+
+function renderSummarizeProgress() {
+  if (!el.summProgress) return;
+  const remaining = singleSummQueue.length + singleSummInFlight;
+  if (remaining > 0 && remaining <= state.pendingSummCount) {
+    el.summProgress.textContent = `Summarizing ${state.pendingSummCount - remaining + singleSummInFlight}/${state.pendingSummCount}…`;
+    el.summProgress.classList.remove("hidden");
+  } else if (remaining === 0) {
+    el.summProgress.classList.add("hidden");
+    state.pendingSummCount = 0;
   }
 }
 
@@ -401,9 +439,11 @@ function bumpSingleSummarize() {
     singleSummInFlight++;
     fetchDetail(id).finally(() => {
       singleSummInFlight--;
+      renderSummarizeProgress();
       bumpSingleSummarize();
     });
   }
+  renderSummarizeProgress();
 }
 
 /* ───────────────────────────── Rendering ───────────────────────── */
@@ -858,6 +898,7 @@ function renderCategoryGroupView() {
         <span class="min-w-0 flex-1 truncate text-[13px] font-bold text-slate-800 dark:text-slate-200">${esc(g.label)}</span>
         ${g.domain ? `<span class="shrink-0 rounded-md bg-sky-500/15 px-1.5 py-px font-mono text-[10px] font-bold text-sky-700 dark:text-sky-300">@${esc(g.domain)}</span>` : ""}
         <span class="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">${g.items.length}</span>
+        ${g.domain ? `<button data-domain-del="${esc(g.domain)}" class="shrink-0 rounded bg-red-500/15 px-1.5 py-0.5 text-[9px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition">Trash domain</button>` : ""}
       </div>
       <div class="p-2 space-y-2">
         ${g.threads.map((t) => `
@@ -878,11 +919,16 @@ function groupRow(g) {
       promo = `<span class="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:text-amber-300">PROMO</span>`;
     }
   }
+  let delBtn = "";
+  if (g.key !== "singles") {
+    delBtn = `<button data-gdel="${esc(g.key)}" class="shrink-0 rounded-lg bg-red-500/15 px-1.5 py-0.5 text-[9px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition" title="Delete all ${g.ids.length} from this sender">🗑</button>`;
+  }
   return `
     <li class="group-row rounded-lg border ${active ? "border-violet-500/60 bg-violet-500/10" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60"} px-3 py-2 flex items-center gap-2 cursor-pointer select-none transition hover:bg-slate-100 dark:hover:bg-slate-800/70" data-group="${esc(g.key)}"${active ? ` data-active="yes"` : ""}>
       <p class="min-w-0 flex-1 text-[13px] font-semibold ${active ? "text-violet-800 dark:text-violet-200" : "text-slate-800 dark:text-slate-200"} truncate">${esc(g.label)}</p>
       ${promo}
       <span class="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">${g.ids.length}</span>
+      ${delBtn}
     </li>`;
 }
 
@@ -1083,14 +1129,14 @@ function emailCard(it) {
   let summaryHTML;
   if (sum.one_liner) {
     const bullets = (sum.bullets || []).length
-      ? `<ul class="mt-1 space-y-0.5 text-[11px] text-slate-500 dark:text-slate-500">${sum.bullets.map((b) => `<li class="flex gap-1.5"><span class="text-violet-500">▸</span><span>${esc(b)}</span></li>`).join("")}</ul>` : "";
-    summaryHTML = `<div class="mt-1.5 flex items-center gap-2 flex-wrap"><p class="text-xs text-slate-600 dark:text-slate-400">${esc(sum.one_liner)}</p>${tokenPill(sum)}</div>${bullets}`;
+      ? `<ul class="mt-1 space-y-0.5 text-[12px] text-slate-500 dark:text-slate-500 line-clamp-6">${sum.bullets.map((b) => `<li class="flex gap-1.5"><span class="text-violet-500">▸</span><span>${esc(b)}</span></li>`).join("")}</ul>` : "";
+    summaryHTML = `<div class="mt-1.5 flex items-center gap-2 flex-wrap"><p class="text-sm text-slate-700 dark:text-slate-300 font-medium leading-relaxed">${esc(sum.one_liner)}</p>${tokenPill(sum)}</div>${bullets}`;
   } else {
     summaryHTML = `<div class="mt-2 shimmer h-4 w-full"></div>`;
   }
 
   const previewHTML = it.preview
-    ? `<p class="mt-1 text-[11px] text-slate-500 dark:text-slate-500 line-clamp-3">${esc(it.preview)}</p>` : "";
+    ? `<p class="mt-1 text-[12px] text-slate-500 dark:text-slate-500 line-clamp-3 leading-relaxed">${esc(it.preview)}</p>` : "";
 
   const badges = [];
   if (sum.action_needed === "pay") badges.push(`<span class="rounded bg-red-500/15 px-1.5 py-0.5 text-[9px] font-bold text-red-700 dark:text-red-300">PAYMENT</span>`);
@@ -1111,7 +1157,8 @@ function emailCard(it) {
     <a href="https://mail.google.com/mail/u/0/#inbox/${esc(it.id)}" target="_blank" rel="noopener noreferrer" class="rounded bg-slate-500/15 px-2 py-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-500/30 transition" title="Open in Gmail">Gmail ↗</a>
     <button data-cardact="recat" data-id="${esc(it.id)}" class="rounded bg-slate-500/15 px-2 py-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-500/30 transition" title="Set or re-evaluate this email's category">⟳</button>
     <button data-cardact="ruleBlock" data-id="${esc(it.id)}" class="rounded bg-red-500/15 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition">Block</button>
-    ${it.promo ? `<button data-cardact="rulePromoBlock" data-id="${esc(it.id)}" class="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition">Auto-del promos</button>` : ""}`;
+    ${it.promo ? `<button data-cardact="rulePromoBlock" data-id="${esc(it.id)}" class="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition">Auto-del promos</button>` : ""}
+    <button data-cardact="regen" data-id="${esc(it.id)}" class="rounded bg-violet-500/15 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-500/30 transition" title="Regenerate AI summary">↻ Regen</button>`;
 
   return `
     <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-3 transition group-card ${politics ? "opacity-60" : ""}" data-expand="${esc(it.id)}" data-expanded="${expanded}">
@@ -1159,23 +1206,16 @@ function detailHTML(it) {
   const bodyHTML = !d
     ? `<div class="mt-2 shimmer h-4 w-full"></div><div class="mt-2 shimmer h-4 w-3/4"></div><div class="mt-2 shimmer h-4 w-5/6"></div>`
     : d.body_text
-      ? `<div class="email-body mt-2 text-sm text-slate-700 dark:text-slate-300">${linkify(d.body_text)}</div>${d.body_truncated ? `<p class="mt-2 text-xs text-amber-600 dark:text-amber-400/80">Body truncated at 80k chars for speed.</p>` : ""}`
-      : `<div class="email-body mt-2 text-sm text-slate-700 dark:text-slate-300">(no extractable text)</div>`;
-  const sumBlock = sum && sum.one_liner
-    ? `<div class="mt-2.5 rounded-lg bg-violet-500/10 border border-violet-500/25 px-3 py-2 text-xs text-violet-900 dark:text-violet-100">
-        <span class="font-bold text-violet-700 dark:text-violet-300">AI summary</span>
-        <p class="mt-0.5 text-violet-900/90 dark:text-violet-100/90">${esc(sum.one_liner)}</p>
-        ${sum.bullets && sum.bullets.length ? `<ul class="mt-1 space-y-0.5 text-[11px] text-violet-900/70 dark:text-violet-100/70">${sum.bullets.map((b) => `<li class="flex gap-1.5"><span class="text-violet-500">▸</span><span>${esc(b)}</span></li>`).join("")}</ul>` : ""}
-      </div>` : "";
+      ? `<div class="email-body mt-2 max-w-none leading-relaxed text-slate-700 dark:text-slate-300 selection:bg-violet-500/20">${linkify(d.body_text)}</div>${d.body_truncated ? `<p class="mt-2 text-xs text-amber-600 dark:text-amber-400/80">Body truncated at 80k chars for speed.</p>` : ""}`
+      : `<div class="email-body mt-2 text-slate-700 dark:text-slate-300">(no extractable text)</div>`;
   return `
     <div class="mt-3 border-t border-slate-200 dark:border-slate-800 pt-3">
-      <div class="flex items-center gap-2 flex-wrap text-[11px] text-slate-500 dark:text-slate-400">
+      <div class="flex items-center gap-2 flex-wrap text-[12px] text-slate-500 dark:text-slate-400">
         <span class="font-mono truncate">${esc(sender)}</span>
         <span>·</span>
         <span>${esc(date)}</span>
         ${tokenPill(sum)}
       </div>
-      ${sumBlock}
       ${attHTML}
       ${bodyHTML}
       <div class="mt-2 flex items-center gap-1.5">
@@ -1353,6 +1393,57 @@ function queueBulk(action, groupKey) {
       restoreToQueue(affected);
       refreshMainView();
       toast(`Bulk ${action === "trash" ? "delete" : "archive"} failed — emails restored`, "err", { duration: 4000 });
+      scheduleOpRemoval(op);
+    });
+}
+
+function queueDomainTrash(domain, items) {
+  if (!domain || !items || !items.length) return;
+  if (state.pendingOps.some((o) => o.groupKey === "__domain__" + domain && o.status !== "done")) {
+    toast(`Already trashing ${domain}`, "info", { duration: 1500 });
+    return;
+  }
+  const ids = items.map((i) => i.id);
+  const label = `Trash all from @${domain} (${ids.length} email${ids.length === 1 ? "" : "s"})`;
+
+  const idSet = new Set(ids);
+  state.queue = state.queue.filter((i) => !idSet.has(i.id));
+  ids.forEach((id) => state.detail.delete(id));
+  invalidateGroups();
+  state.expandedCardId = null;
+  renderSidebar();
+  if (state.viewMode === "categories") renderCategoryGroupView();
+  else if (state.viewMode === "group") renderGroupView();
+
+  const op = {
+    id: (window.crypto && typeof window.crypto.randomUUID === "function" ? window.crypto.randomUUID() : String(Date.now()) + "-" + Math.random()),
+    action: "trash",
+    groupKey: "__domain__" + domain,
+    label,
+    count: ids.length,
+    status: "running",
+    ts: Date.now(),
+  };
+  state.pendingOps.unshift(op);
+  if (state.pendingOps.length > 20) state.pendingOps.length = 20;
+  renderPendingOps();
+
+  api(`/api/domains/${encodeURIComponent(domain)}/trash`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message_ids: ids }),
+  })
+    .then((res) => {
+      const failedN = (res.failed || []).length;
+      if (failedN) toast(`${failedN} email${failedN === 1 ? "" : "s"} failed — retry`, "err", { duration: 4000 });
+      op.status = "done";
+      renderPendingOps();
+      scheduleOpRemoval(op);
+    })
+    .catch((e) => {
+      op.status = "failed";
+      renderPendingOps();
+      toast(`Trash domain failed — ${e.message}`, "err", { duration: 4000 });
       scheduleOpRemoval(op);
     });
 }
@@ -1886,6 +1977,12 @@ el.groupList.addEventListener("click", (e) => {
   if (th) { selectThread(th.dataset.thread); return; }
   const c = e.target.closest("[data-catgroup]");
   if (c) { selectCategoryGroup(c.dataset.catgroup); return; }
+  const d = e.target.closest("[data-gdel]");
+  if (d) {
+    e.stopPropagation();
+    queueBulk("trash", d.dataset.gdel);
+    return;
+  }
   const t = e.target.closest("[data-group]");
   if (t) selectGroup(t.dataset.group);
 });
@@ -1931,6 +2028,17 @@ el.emailCards.addEventListener("click", (e) => {
   state.expandedCardId = state.expandedCardId === id ? null : id;
   refreshMainView();
 });
+el.emailCards.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-domain-del]");
+  if (!b) return;
+  const domain = b.dataset.domainDel;
+  const cat = state.activeCatGroup;
+  const affected = state.queue.filter(
+    (i) => (emailCategory(i) || "Uncategorized") === cat &&
+      ((i.sender_email || "").split("@")[1] || "").toLowerCase() === domain
+  );
+  if (affected.length) queueDomainTrash(domain, affected);
+});
 
 document.addEventListener("click", (e) => {
   const b = e.target.closest("[data-cardact]");
@@ -1939,6 +2047,7 @@ document.addEventListener("click", (e) => {
   const act = b.dataset.cardact;
   if (act === "skip") skipForNowById(id);
   else if (act === "recat") openRecatModal(id);
+  else if (act === "regen") regenerateSummary(id);
   else if (act === "todo") toggleTodo(id);
   else if (act === "ruleBlock") issueRuleBlock(id);
   else if (act === "rulePromoBlock") issueRulePromoBlock(id);

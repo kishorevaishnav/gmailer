@@ -112,6 +112,38 @@ def api_logout():
     return {"ok": True}
 
 
+# --- Settings (prompts, etc.) --------------------------------------------------
+
+class PromptsPatchRequest(BaseModel):
+    ai_system_prompt: str | None = None
+    ai_group_system_prompt: str | None = None
+    ai_category_system_prompt: str | None = None
+
+
+PROMPT_KEYS = [
+    ("ai_system_prompt", "Email summary system prompt", ai_summary.get_system_prompt),
+    ("ai_group_system_prompt", "Group sender summary system prompt", ai_summary.get_group_system_prompt),
+    ("ai_category_system_prompt", "Category-level summary system prompt", ai_summary.get_category_system_prompt),
+]
+
+
+@app.get("/api/settings/prompts")
+def api_settings_prompts():
+    items = []
+    for key, label, getter in PROMPT_KEYS:
+        items.append({"key": key, "label": label, "value": getter()})
+    return {"prompts": items}
+
+
+@app.put("/api/settings/prompts")
+def api_settings_prompts_update(req: PromptsPatchRequest):
+    data = req.model_dump(exclude_unset=True)
+    for key, _label, _getter in PROMPT_KEYS:
+        if key in data:
+            store.set_setting(key, data[key])
+    return {"ok": True}
+
+
 # --- Queue -------------------------------------------------------------------
 
 @app.get("/api/queue")
@@ -180,6 +212,25 @@ def api_message(message_id: str):
     store.save_message(msg)
     safe_review(service)
     return msg
+
+
+@app.post("/api/messages/{message_id}/summarize")
+def api_regenerate_summary(message_id: str):
+    if message_id in ai_summary._CACHE:
+        del ai_summary._CACHE[message_id]
+
+    cached = store.load_message(message_id)
+    if cached and cached.get("body_text"):
+        msg = cached
+    else:
+        service = require_service()
+        msg = _run(gmail_service.get_full, service, message_id)
+        if cached:
+            msg["id"] = cached["id"]
+
+    msg["summary"] = ai_summary.generate_summary(msg, force=True)
+    store.save_message(msg)
+    return {"id": msg["id"], "summary": msg["summary"]}
 
 
 @app.get("/api/messages/{message_id}/attachments/{attachment_id}")
@@ -1002,6 +1053,16 @@ def api_bundle_archive(sender_key: str, req: BulkRequest):
     return _run_bulk(service, gmail_service.archive, req, "archive")
 
 
+@app.post("/api/domains/{domain}/trash")
+def api_domain_trash(domain: str, req: BulkRequest):
+    service = require_service()
+    result = _run_bulk(service, gmail_service.trash, req, "trash")
+    result["removed_from_cache"] = store.remove_messages(
+        [mid for mid in req.message_ids if mid not in result["failed"]]
+    )
+    return result
+
+
 # --- Undo ---------------------------------------------------------------------
 
 class UndoRequest(BaseModel):
@@ -1074,3 +1135,8 @@ def rules_page():
 @app.get("/todos", include_in_schema=False)
 def todos_page():
     return FileResponse(config.STATIC_DIR / "todos.html")
+
+
+@app.get("/settings", include_in_schema=False)
+def settings_page():
+    return FileResponse(config.STATIC_DIR / "settings.html")

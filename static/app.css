@@ -69,9 +69,10 @@ html, body {
   white-space: pre-wrap;
   word-wrap: break-word;
   overflow-wrap: break-word;
-  font-size: 14.5px;
-  line-height: 1.65;
+  font-size: 15px;
+  line-height: 1.7;
   color: #1e293b;
+  max-width: 100%;
   user-select: text;
 }
 .dark .email-body { color: #cbd5e1; }

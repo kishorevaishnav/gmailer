@@ -66,6 +66,8 @@ _SYSTEM_PROMPT = (
     "outside the JSON."
 )
 
+_DEFAULT_SYSTEM_PROMPT = _SYSTEM_PROMPT
+
 _FALLBACK_CATEGORIES = [
     "Newsletter",
     "Share/Stock",
@@ -86,6 +88,28 @@ _PROMO_HINT_RE = re.compile(
     r"reward|rewards|coupon|promo|promotions?|clearance)\b",
     re.IGNORECASE,
 )
+
+
+def _setting(key: str, default: str) -> str:
+    try:
+        val = store.get_setting(key)
+        if val:
+            return val
+    except Exception:
+        pass
+    return default
+
+
+def get_system_prompt() -> str:
+    return _setting("ai_system_prompt", _SYSTEM_PROMPT)
+
+
+def get_group_system_prompt() -> str:
+    return _setting("ai_group_system_prompt", _GROUP_SYSTEM_PROMPT)
+
+
+def get_category_system_prompt() -> str:
+    return _setting("ai_category_system_prompt", _CATEGORY_SYSTEM_PROMPT)
 
 
 def _looks_promo(msg: dict) -> bool:
@@ -248,9 +272,9 @@ def _finalize_summary(d: dict) -> dict:
     return d
 
 
-def generate_summary(msg: dict) -> dict:
+def generate_summary(msg: dict, force: bool = False) -> dict:
     mid = msg.get("id") or ""
-    if mid and mid in _CACHE:
+    if not force and mid and mid in _CACHE:
         return dict(_CACHE[mid])
 
     categories = _allowed_categories()
@@ -285,7 +309,7 @@ def _ollama_summarize(msg: dict, categories: list[str] | None = None) -> dict | 
 
     payload = {
         "model": config.OLLAMA_MODEL,
-        "system": _SYSTEM_PROMPT,
+        "system": get_system_prompt(),
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
         "keep_alive": "30m",
@@ -537,7 +561,7 @@ def _ollama_category_summary(category: str, messages: list[dict]) -> str | None:
 
     payload = {
         "model": config.OLLAMA_MODEL,
-        "system": _CATEGORY_SYSTEM_PROMPT,
+        "system": get_category_system_prompt(),
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
         "keep_alive": "30m",
@@ -730,7 +754,7 @@ def _ollama_group_summarize(label: str, emails: list[dict]) -> dict | None:
 
     payload = {
         "model": config.OLLAMA_MODEL,
-        "system": _GROUP_SYSTEM_PROMPT,
+        "system": get_group_system_prompt(),
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
         "keep_alive": "30m",

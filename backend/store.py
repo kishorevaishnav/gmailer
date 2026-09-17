@@ -148,6 +148,12 @@ CREATE TABLE IF NOT EXISTS queue (
     added_at  REAL
 );
 CREATE INDEX IF NOT EXISTS idx_queue_added ON queue(added_at);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key       TEXT PRIMARY KEY,
+    value     TEXT NOT NULL,
+    updated_at REAL
+);
 """
 
 _DEFAULT_CATEGORIES = [
@@ -413,6 +419,23 @@ def list_messages(limit: int = 500, offset: int = 0) -> list[dict]:
     for row in rows:
         out.append(_message_row_to_dict(row))
     return out
+
+
+def remove_messages(message_ids: list[str]) -> int:
+    if not message_ids:
+        return 0
+    try:
+        placeholders = ",".join("?" for _ in message_ids)
+        with _lock:
+            cur = _get().execute(
+                f"DELETE FROM messages WHERE id IN ({placeholders})",
+                tuple(message_ids),
+            )
+            _get().commit()
+        return cur.rowcount
+    except Exception as exc:
+        logger.warning("store.remove_messages failed: %s", exc)
+        return 0
 
 
 def save_attachments(message_id: str, attachments: list[dict]) -> None:
@@ -1317,3 +1340,40 @@ def migrate_legacy_blocked() -> int:
         _get().execute("DROP TABLE IF EXISTS promo_blocked")
         _get().commit()
     return made
+
+
+# --- Settings (user-modifiable prompts, etc.) ----------------------------------
+
+def get_setting(key: str, default: str = "") -> str:
+    try:
+        with _lock:
+            row = _get().execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        if row and row["value"] is not None:
+            return row["value"]
+    except Exception as exc:
+        logger.warning("store.get_setting failed: %s", exc)
+    return default
+
+
+def set_setting(key: str, value: str) -> None:
+    value = value if value is not None else ""
+    now = time.time()
+    with _lock:
+        _get().execute(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            (key, value, now),
+        )
+        _get().commit()
+
+
+def get_all_settings() -> dict[str, str]:
+    out: dict[str, str] = {}
+    try:
+        with _lock:
+            rows = _get().execute("SELECT key, value FROM settings").fetchall()
+        for r in rows:
+            out[str(r["key"])] = str(r["value"]) if r["value"] is not None else ""
+    except Exception as exc:
+        logger.warning("store.get_all_settings failed: %s", exc)
+    return out
