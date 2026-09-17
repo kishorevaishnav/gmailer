@@ -304,10 +304,28 @@ def _flatten_text(parts: list[dict], texts: list[str]) -> None:
             _flatten_text(p.get("parts", []), texts)
 
 
+def _strip_html(html_source: str) -> str:
+    stripped = _STYLE_SCRIPT_RE.sub(" ", html_source)
+    stripped = _COMMENT_RE.sub(" ", stripped)
+    return html.unescape(_TAG_RE.sub(" ", stripped)).strip()
+
+
+def _clean_ws(text: str) -> str:
+    combined = text.replace("\r\n", "\n").replace("\r", "\n")
+    combined = _MULTI_WS_RE.sub(" ", combined)
+    combined = re.sub(r"[ \t]+\n", "\n", combined)  # trailing ws per line
+    combined = re.sub(r"\n[ \t]+", "\n", combined)  # leading indent per line
+    combined = _BLANK_RUN_RE.sub("\n\n", combined)  # max one blank line
+    return combined.strip(" \t\n")
+
+
 def _extract_text(payload: dict) -> str:
     parts = payload.get("parts") or []
     if not parts:
-        return _decode_body(payload)
+        decoded = _decode_body(payload)
+        if (payload.get("mimeType") or "") == "text/html":
+            return _clean_ws(_strip_html(decoded))
+        return _clean_ws(decoded)
 
     plain: list[str] = []
     html_source: str | None = None
@@ -321,18 +339,13 @@ def _extract_text(payload: dict) -> str:
         elif chunk:
             plain.append(chunk)
 
-    if not plain and html_source:
-        stripped = _STYLE_SCRIPT_RE.sub(" ", html_source)
-        stripped = _COMMENT_RE.sub(" ", stripped)
-        plain.append(html.unescape(_TAG_RE.sub(" ", stripped)).strip())
-
-    combined = "\n\n".join(plain)
-    combined = combined.replace("\r\n", "\n").replace("\r", "\n")
-    combined = _MULTI_WS_RE.sub(" ", combined)
-    combined = re.sub(r"[ \t]+\n", "\n", combined)  # trailing ws per line
-    combined = re.sub(r"\n[ \t]+", "\n", combined)  # leading indent per line
-    combined = _BLANK_RUN_RE.sub("\n\n", combined)  # max one blank line
-    return combined.strip(" \t\n")
+    plain_text = _clean_ws("\n\n".join(plain))
+    html_text = _clean_ws(_strip_html(html_source)) if html_source else ""
+    if plain_text and html_text:
+        if len(html_text) > len(plain_text) * 1.5:
+            return html_text
+        return plain_text
+    return plain_text or html_text
 
 
 def extract_attachments(payload: dict) -> list[dict]:
