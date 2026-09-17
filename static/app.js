@@ -65,7 +65,7 @@ const el = {
 
   loadMoreBtn: $("loadMoreBtn"),
   userChip: $("userChip"), logoutBtn: $("logoutBtn"),
-  themeBtn: $("themeBtn"), themeIconMoon: $("themeIconMoon"), themeIconSun: $("themeIconSun"), themeIconApple: $("themeIconApple"),
+  themeBtn: $("themeBtn"), themeIconMoon: $("themeIconMoon"), themeIconSun: $("themeIconSun"),
   position: $("position"), positionTotal: $("positionTotal"),
   undoTopBtn: $("undoTopBtn"), reloadBtn: $("reloadBtn"), clearCacheBtn: $("clearCacheBtn"), todoCount: $("todoCount"),   searchInput: $("searchInput"),
   summProgress: $("summProgress"),
@@ -160,11 +160,10 @@ function clearToasts() {
 }
 
 /* ───────────────────────────── Theme ───────────────────────────── */
-const THEMES = ["dark", "light", "apple"];
+const THEMES = ["dark", "light"];
 
 function currentTheme() {
   if (document.documentElement.classList.contains("dark")) return "dark";
-  if (document.documentElement.getAttribute("data-theme") === "apple") return "apple";
   return "light";
 }
 
@@ -172,17 +171,12 @@ function applyThemeUI() {
   const t = currentTheme();
   el.themeIconMoon.classList.toggle("hidden", t !== "dark");
   el.themeIconSun.classList.toggle("hidden", t !== "light");
-  el.themeIconApple.classList.toggle("hidden", t !== "apple");
-  el.themeBtn.title = t === "dark" ? "Theme: dark — click for light"
-    : t === "light" ? "Theme: light — click for Apple-like"
-    : "Theme: Apple — click for dark";
+  el.themeBtn.title = t === "dark" ? "Theme: dark — click for light" : "Theme: light — click for dark";
 }
 
 function toggleTheme() {
   const next = THEMES[(THEMES.indexOf(currentTheme()) + 1) % THEMES.length];
   document.documentElement.classList.toggle("dark", next === "dark");
-  if (next === "apple") document.documentElement.setAttribute("data-theme", "apple");
-  else document.documentElement.removeAttribute("data-theme");
   try { localStorage.setItem("gmailer-theme", next); } catch (e) {}
   applyThemeUI();
 }
