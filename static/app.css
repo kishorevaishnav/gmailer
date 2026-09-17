@@ -1,13 +1,64 @@
+/* ════════════════ shadcn-style HSL token layer ════════════════ */
+
 :root {
+  --background: 0 0% 100%;
+  --foreground: 240 10% 3.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 3.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 3.9%;
+  --primary: 262 83% 58%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 4.8% 95.9%;
+  --secondary-foreground: 240 5.9% 10%;
+  --muted: 240 4.8% 95.9%;
+  --muted-foreground: 240 3.8% 46.1%;
+  --accent: 240 4.8% 95.9%;
+  --accent-foreground: 240 5.9% 10%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 5.9% 90%;
+  --input: 240 5.9% 90%;
+  --ring: 262 83% 58%;
+  --radius: 0.5rem;
   --scroll-thumb: #cbd5e1;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SF Mono", "Fira Code", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
 }
+
 .dark {
+  --background: 240 10% 3.9%;
+  --foreground: 0 0% 98%;
+  --card: 240 10% 3.9%;
+  --card-foreground: 0 0% 98%;
+  --popover: 240 10% 3.9%;
+  --popover-foreground: 0 0% 98%;
+  --primary: 262 83% 58%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 3.7% 15.9%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
+  --accent: 240 3.7% 15.9%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 3.7% 15.9%;
+  --input: 240 3.7% 15.9%;
+  --ring: 262 83% 58%;
   --scroll-thumb: #334155;
 }
+
+/* ════════════════ Base ════════════════ */
 
 html, body {
   height: 100%;
   overscroll-behavior: none;
+  font-family: var(--font-sans);
+}
+
+* {
+  font-feature-settings: "liga" 1, "calt" 1;
 }
 
 #viewport {
@@ -25,7 +76,86 @@ html, body {
   background: transparent;
 }
 
-/* Hard keys */
+/* ════════════════ Shared component classes (outline style) ════════════════ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: calc(var(--radius) - 2px);
+  border: 1px solid transparent;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25rem;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease, opacity .15s ease;
+}
+.btn:focus-visible,
+.input:focus-visible,
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--ring));
+}
+.btn-primary {
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+.btn-primary:hover { opacity: .9; }
+
+.btn-outline {
+  background-color: hsl(var(--background));
+  border-color: hsl(var(--input));
+  color: hsl(var(--foreground));
+}
+.btn-outline:hover {
+  background-color: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.btn-destructive {
+  background-color: hsl(var(--destructive));
+  color: hsl(var(--destructive-foreground));
+}
+.btn-destructive:hover { opacity: .9; }
+
+.btn-ghost {
+  background-color: transparent;
+  color: hsl(var(--muted-foreground));
+}
+.btn-ghost:hover {
+  background-color: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+
+.input {
+  border-radius: calc(var(--radius) - 2px);
+  border: 1px solid hsl(var(--input));
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  padding: 7px 12px;
+  font-size: 13px;
+  font-family: var(--font-sans);
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.input:focus-visible { border-color: hsl(var(--ring)); }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 9999px;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* ════════════════ Hard keys (keyboard hint pills) ════════════════ */
+
 .key {
   display: inline-flex;
   align-items: center;
@@ -36,6 +166,7 @@ html, body {
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
+.dark .key { color: #94a3b8; }
 .key em { font-style: normal; opacity: .7; }
 .k {
   display: inline-grid;
@@ -64,7 +195,8 @@ html, body {
 .dark .k.violet { border-color: rgba(139,92,246,.55); color: #c4b5fd; }
 .key.dim { opacity: .55; }
 
-/* Email body linkify + text */
+/* ════════════════ Email body linkify + text ════════════════ */
+
 .email-body {
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -85,14 +217,16 @@ html, body {
 .email-body a:hover { color: #0369a1; }
 .dark .email-body a:hover { color: #bae6fd; }
 
-/* Toast animation */
+/* ════════════════ Toast animation ════════════════ */
+
 .toast { animation: toast-in .18s ease; }
 @keyframes toast-in {
   from { transform: translateY(-6px); opacity: 0; }
   to   { transform: none; opacity: 1; }
 }
 
-/* Shimmer placeholders while detail preloads */
+/* ════════════════ Shimmer placeholders ════════════════ */
+
 .shimmer {
   border-radius: 8px;
   background: linear-gradient(90deg, #e2e8f0 25%, #f8fafc 37%, #e2e8f0 63%);
@@ -108,7 +242,8 @@ html, body {
   100% { background-position: 0 0; }
 }
 
-/* ═══════════════ Rules & Wiki ═══════════════ */
+/* ════════════════ Rules & Wiki ════════════════ */
+
 .rw-collapsed #rulesWikiBody { display: none; }
 .rw-collapsed #rulesWikiChevron { transform: rotate(-90deg); }
 
@@ -127,7 +262,7 @@ html, body {
   border-radius: 8px;
   border: 1px solid;
   padding: 6px 8px;
-  font-size: 11px;
+  font-size: 12px;
   transition: border-color 0.15s;
 }
 .rule-card {
@@ -167,7 +302,7 @@ html, body {
 
 .rule-meta {
   color: #64748b;
-  font-size: 10px;
+  font-size: 11px;
   margin-top: 2px;
 }
 .dark .rule-meta { color: #94a3b8; }
@@ -180,7 +315,7 @@ html, body {
   flex-wrap: wrap;
 }
 .rule-actions button {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   padding: 2px 6px;
   border-radius: 4px;
@@ -233,7 +368,7 @@ html, body {
   background: #f8fafc;
   color: #94a3b8;
   padding: 1px 4px;
-  font-size: 9px;
+  font-size: 10px;
 }
 .dark .rule-actions .btn-move {
   border-color: #334155;
@@ -250,7 +385,7 @@ html, body {
 .dark .proposal-label { color: #c4b5fd; }
 .proposal-summary {
   color: #64748b;
-  font-size: 10px;
+  font-size: 11px;
   margin-top: 2px;
 }
 .dark .proposal-summary { color: #94a3b8; }
@@ -260,7 +395,7 @@ html, body {
   margin-top: 4px;
 }
 .proposal-actions button {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   padding: 2px 8px;
   border-radius: 4px;
@@ -305,13 +440,13 @@ html, body {
 }
 .dark .proposal-detail { border-top-color: rgba(139,92,246,.1); }
 .proposal-rationale, .proposal-downside {
-  font-size: 10px;
+  font-size: 11px;
   color: #64748b;
   margin-top: 2px;
 }
 .dark .proposal-rationale, .proposal-downside { color: #94a3b8; }
 .proposal-evidence {
-  font-size: 10px;
+  font-size: 11px;
   color: #94a3b8;
   margin-top: 2px;
   max-height: 40px;
@@ -326,7 +461,7 @@ html, body {
 }
 .wiki-summary {
   color: #64748b;
-  font-size: 10px;
+  font-size: 11px;
   flex: 1;
 }
 .dark .wiki-summary { color: #94a3b8; }
@@ -341,7 +476,7 @@ html, body {
   margin-top: 4px;
 }
 .wiki-actions button {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   padding: 2px 6px;
   border-radius: 4px;
@@ -390,9 +525,10 @@ html, body {
 
 /* Editor */
 #editorContent {
-  font-family: "SF Mono", "Fira Code", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  font-family: var(--font-mono);
   line-height: 1.6;
   tab-size: 2;
+  font-size: 13px;
 }
 #editorErrors .error-line {
   display: block;
@@ -401,4 +537,60 @@ html, body {
 /* Section collapse animation */
 #rulesWikiBody {
   transition: opacity 0.2s ease;
+}
+
+/* ════════════════ Apple theme (macOS-style, optional 3rd theme) ════════════════ */
+[data-theme="apple"] {
+  --apple-bg: #f6f5f4;
+  --apple-card: #ffffff;
+  --apple-border: #d2d0ce;
+  --apple-fg: #2d2b29;
+  --apple-muted: #e5e3e0;
+  --apple-muted-fg: #8a8885;
+}
+[data-theme="apple"] body,
+[data-theme="apple"] main,
+[data-theme="apple"] aside {
+  background: var(--apple-bg) !important;
+  color: var(--apple-fg) !important;
+}
+[data-theme="apple"] aside,
+[data-theme="apple"] main > header {
+  background: transparent !important;
+}
+[data-theme="apple"] .rounded-xl,
+[data-theme="apple"] .domain-card {
+  background: var(--apple-card) !important;
+  border-color: var(--apple-border) !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,.04);
+}
+[data-theme="apple"] .group-card,
+[data-theme="apple"] #groupHeader {
+  background: hsl(var(--primary) / .08) !important;
+  border-color: hsl(var(--primary) / .4) !important;
+}
+[data-theme="apple"] .key { color: var(--apple-muted-fg); }
+[data-theme="apple"] .k {
+  border-color: var(--apple-border);
+  background: var(--apple-muted);
+  color: var(--apple-fg);
+}
+[data-theme="apple"] .email-body { color: var(--apple-fg); }
+[data-theme="apple"] .shimmer {
+  background: linear-gradient(90deg, var(--apple-muted) 25%, var(--apple-card) 37%, var(--apple-muted) 63%);
+}
+[data-theme="apple"] .toast {
+  background: var(--apple-card);
+  border-color: var(--apple-border);
+  color: var(--apple-fg);
+  box-shadow: 0 4px 24px rgba(0,0,0,.08);
+}
+[data-theme="apple"] .rule-card,
+[data-theme="apple"] .wiki-card {
+  border-color: var(--apple-border);
+  background: var(--apple-card);
+}
+[data-theme="apple"] .proposal-card {
+  border-color: rgba(139,92,246,.3);
+  background: rgba(139,92,246,.06);
 }

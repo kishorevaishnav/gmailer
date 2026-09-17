@@ -39,10 +39,10 @@ async function api(path, opts = {}) {
 function toast(msg, tone = "info") {
   const t = document.createElement("div");
   t.className = "rounded-xl border px-4 py-2 text-sm shadow-xl " + (tone === "err"
-    ? "bg-red-50 border-red-300 text-red-700 dark:bg-red-950 dark:border-red-600/60 dark:text-red-100"
+    ? "bg-red-50 border-red-300 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-100"
     : tone === "ok"
-      ? "bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-emerald-950 dark:border-emerald-600/60 dark:text-emerald-100"
-      : "bg-white border-slate-300 text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100");
+      ? "bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-emerald-950 dark:border-emerald-700 dark:text-emerald-100"
+      : "bg-white dark:bg-slate-900 border-border text-foreground");
   t.textContent = msg;
   el.toasts.appendChild(t);
   setTimeout(() => { t.style.opacity = "0"; setTimeout(() => t.remove(), 300); }, 2600);
@@ -63,9 +63,9 @@ function setTab(name) {
   }
   document.querySelectorAll(".tabBtn").forEach((b) => {
     const active = b.dataset.tab === name;
-    b.className = "tabBtn rounded-lg px-3 py-1.5 font-bold " + (active
-      ? "bg-violet-500/20 text-violet-700 dark:text-violet-300"
-      : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300");
+    b.className = "tabBtn btn font-bold " + (active
+      ? "bg-primary/20 text-primary"
+      : "text-muted-foreground hover:text-foreground");
   });
 }
 
@@ -93,7 +93,7 @@ function matchSummary(p) {
 function senderChips(p, ruleId) {
   if (!isSenderOnly(p)) return "";
   return `<div class="mt-1.5 flex flex-wrap gap-1">${senderList(p).map((s) => `
-    <span class="inline-flex items-center gap-1 rounded-md bg-slate-500/10 px-1.5 py-0.5 font-mono text-[10px] text-slate-600 dark:text-slate-300">${esc(s)}<button data-act="rmsender" data-id="${ruleId}" data-sender="${esc(s)}" class="font-bold text-slate-400 hover:text-red-500" title="Remove this sender from the rule">×</button></span>`).join("")}</div>`;
+    <span class="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">${esc(s)}<button data-act="rmsender" data-id="${ruleId}" data-sender="${esc(s)}" class="font-bold text-destructive hover:text-red-500" title="Remove this sender from the rule">×</button></span>`).join("")}</div>`;
 }
 
 function renderAll() {
@@ -107,71 +107,71 @@ function renderAll() {
   const card = (r) => {
     const p = r.parsed || {};
     const i = pos++;
-    return `<li draggable="true" data-id="${r.id}" class="rule-row rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-3 cursor-grab">
+    return `<li draggable="true" data-id="${r.id}" class="rule-row rounded-xl border border-border bg-card p-3 cursor-grab">
       <div class="flex items-center gap-2">
-        <span class="text-[10px] font-mono text-slate-400 w-5">${i + 1}</span>
+        <span class="text-[10px] font-mono text-muted-foreground w-5">${i + 1}</span>
         <span class="min-w-0 flex-1">
           <span class="block text-sm font-bold truncate">${esc(p.name || "Untitled")}</span>
-          <span class="block text-[11px] text-slate-500 truncate">${esc(matchSummary(p))}</span>
+          <span class="block text-xs text-muted-foreground truncate">${esc(matchSummary(p))}</span>
         </span>
-        <span class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${p.action === "trash" ? "bg-red-500/15 text-red-700 dark:text-red-300" : p.action === "star" ? "bg-amber-500/15 text-amber-700 dark:text-amber-300" : "bg-slate-500/15 text-slate-600 dark:text-slate-300"}">${esc(p.action || "?")}</span>
-        <button data-act="up" data-id="${r.id}" class="rounded border border-slate-300 dark:border-slate-700 px-1.5 py-0.5 text-[10px]" title="Move up">▲</button>
-        <button data-act="down" data-id="${r.id}" class="rounded border border-slate-300 dark:border-slate-700 px-1.5 py-0.5 text-[10px]" title="Move down">▼</button>
-        <button data-act="toggle" data-id="${r.id}" class="rounded border px-2 py-0.5 text-[10px] font-bold ${r.enabled ? "border-emerald-500/50 text-emerald-700 dark:text-emerald-300" : "border-slate-300 dark:border-slate-700 text-slate-400"}" title="${r.enabled ? "Disable" : "Enable"}">${r.enabled ? "ON" : "OFF"}</button>
+        <span class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${p.action === "trash" ? "bg-red-500/15 text-red-700 dark:text-red-300" : p.action === "star" ? "bg-amber-500/15 text-amber-700 dark:text-amber-300" : "bg-muted text-muted-foreground"}">${esc(p.action || "?")}</span>
+        <button data-act="up" data-id="${r.id}" class="btn btn-ghost text-xs" title="Move up">▲</button>
+        <button data-act="down" data-id="${r.id}" class="btn btn-ghost text-xs" title="Move down">▼</button>
+        <button data-act="toggle" data-id="${r.id}" class="btn btn-outline text-xs font-bold ${r.enabled ? "border-emerald-500/50 text-emerald-700 dark:text-emerald-300" : "border-border text-muted-foreground"}" title="${r.enabled ? "Disable" : "Enable"}">${r.enabled ? "ON" : "OFF"}</button>
       </div>
       ${senderChips(p, r.id)}
       <div class="mt-2 flex items-center gap-1.5 flex-wrap">
-        <button data-act="edit" data-id="${r.id}" class="rounded bg-violet-500/15 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300">Edit</button>
-        <button data-act="apply" data-id="${r.id}" class="rounded bg-emerald-500/15 px-2 py-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">Apply now</button>
-        <button data-act="traces" data-id="${r.id}" class="rounded bg-slate-500/15 px-2 py-1 text-[10px] font-bold text-slate-600 dark:text-slate-300">Activity</button>
-        <button data-act="del" data-id="${r.id}" class="rounded bg-red-500/15 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-300">Delete</button>
-        <span class="ml-auto text-[10px] text-slate-400 font-mono">#${r.id} · ${esc(p.scope || "")}</span>
+        <button data-act="edit" data-id="${r.id}" class="btn btn-outline text-xs font-bold">Edit</button>
+        <button data-act="apply" data-id="${r.id}" class="btn btn-outline text-xs font-bold text-emerald-700 dark:text-emerald-300">Apply now</button>
+        <button data-act="traces" data-id="${r.id}" class="btn btn-ghost text-xs font-bold text-muted-foreground">Activity</button>
+        <button data-act="del" data-id="${r.id}" class="btn btn-outline text-xs font-bold text-destructive">Delete</button>
+        <span class="ml-auto text-[10px] text-muted-foreground font-mono">#${r.id} · ${esc(p.scope || "")}</span>
       </div>
-      <div id="traces-${r.id}" class="hidden mt-2 border-t border-slate-200 dark:border-slate-800 pt-2 text-[11px] text-slate-500"></div>
+      <div id="traces-${r.id}" class="hidden mt-2 border-t border-border pt-2 text-xs text-muted-foreground"></div>
     </li>`;
   };
   el.rulesList.innerHTML = groups.map(([action, label]) => {
     const group = state.rules.filter((r) => r.parsed && r.parsed.action === action);
     if (!group.length) return "";
-    return `<li class="text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 pt-2">${label} · ${group.length}</li>`
+    return `<li class="text-xs font-bold uppercase tracking-widest text-muted-foreground pt-2">${label} · ${group.length}</li>`
       + group.map(card).join("");
   }).join("") + ung.map(card).join("");
   enableDrag();
 
   el.propsEmpty.classList.toggle("hidden", state.proposals.length > 0);
-  el.proposalsList.innerHTML = state.proposals.map((p) => `<li class="rounded-xl border border-violet-500/40 bg-violet-500/5 p-3">
-    <p class="text-sm font-bold text-violet-800 dark:text-violet-100">${esc(p.label)}</p>
-    <p class="text-[11px] text-slate-500">${esc(p.summary || "")}</p>
-    ${p.rationale ? `<p class="text-[11px] text-slate-500 mt-1"><b>Why:</b> ${esc(p.rationale)}</p>` : ""}
-    ${p.downside ? `<p class="text-[11px] text-slate-500"><b>Risk:</b> ${esc(p.downside)}</p>` : ""}
+   el.proposalsList.innerHTML = state.proposals.map((p) => `<li class="rounded-xl border border-primary/40 bg-primary/5 p-3">
+    <p class="text-sm font-bold text-primary">${esc(p.label)}</p>
+    <p class="text-xs text-muted-foreground">${esc(p.summary || "")}</p>
+    ${p.rationale ? `<p class="text-xs text-muted-foreground mt-1"><b>Why:</b> ${esc(p.rationale)}</p>` : ""}
+    ${p.downside ? `<p class="text-xs text-muted-foreground"><b>Risk:</b> ${esc(p.downside)}</p>` : ""}
     <div class="mt-2 flex gap-1.5">
-      <button data-pact="approve" data-id="${p.id}" class="rounded bg-emerald-500/15 px-2 py-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">Approve</button>
-      <button data-pact="edit" data-id="${p.id}" class="rounded bg-violet-500/15 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300">Edit as rule</button>
-      <button data-pact="reject" data-id="${p.id}" class="rounded bg-red-500/15 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-300">Reject</button>
+      <button data-pact="approve" data-id="${p.id}" class="btn btn-outline text-xs font-bold text-emerald-700 dark:text-emerald-300">Approve</button>
+      <button data-pact="edit" data-id="${p.id}" class="btn btn-outline text-xs font-bold text-primary">Edit as rule</button>
+      <button data-pact="reject" data-id="${p.id}" class="btn btn-outline text-xs font-bold text-destructive">Reject</button>
     </div>
   </li>`).join("");
 
   el.wikiEmpty.classList.toggle("hidden", state.wiki.length > 0);
-  el.wikiList.innerHTML = state.wiki.map((w) => `<li class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-3">
+   el.wikiList.innerHTML = state.wiki.map((w) => `<li class="rounded-xl border border-border bg-card p-3">
     <p class="text-xs font-bold truncate">${esc(w.summary || w.target)}</p>
-    <p class="text-[10px] text-slate-500">${esc(w.kind)} · signal ${(w.signal || 0).toFixed(2)} · ${w.evidence_count || 0} evidence · ${esc(w.status || "open")}</p>
+    <p class="text-[10px] text-muted-foreground">${esc(w.kind)} · signal ${(w.signal || 0).toFixed(2)} · ${w.evidence_count || 0} evidence · ${esc(w.status || "open")}</p>
     <div class="mt-2 flex gap-1.5">
-      <button data-wact="create" data-id="${w.id}" class="rounded bg-violet-500/15 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300">Create rule</button>
-      <button data-wact="dismiss" data-id="${w.id}" class="rounded border border-slate-300 dark:border-slate-700 px-2 py-1 text-[10px] text-slate-500">Dismiss</button>
+      <button data-wact="create" data-id="${w.id}" class="btn btn-outline text-xs font-bold text-primary">Create rule</button>
+      <button data-wact="dismiss" data-id="${w.id}" class="btn btn-outline text-xs text-muted-foreground">Dismiss</button>
     </div>
   </li>`).join("");
 
   el.traceRuleFilter.innerHTML = `<option value="">all rules</option>` + state.rules.map((r) => `<option value="${r.id}">${esc((r.parsed && r.parsed.name) || ("#" + r.id))}</option>`).join("");
 
   el.smCategory.innerHTML = state.categories.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
-  el.senderMapList.innerHTML = state.senders.length ? state.senders.map((m) => `<li class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 px-3 py-2 flex items-center gap-2">
+   el.senderMapList.innerHTML = state.senders.length ? state.senders.map((m) => `<li class="rounded-xl border border-border bg-card px-3 py-2 flex items-center gap-2">
     <span class="font-mono text-xs truncate flex-1">${esc(m.pattern)}</span>
-    <span class="text-[10px] text-slate-400">→</span>
-    <span class="rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">${esc(m.category)}</span>
+    <span class="text-xs text-muted-foreground">→</span>
+    <span class="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-bold text-primary">${esc(m.category)}</span>
     ${m.subject_contains ? `<span class="rounded bg-sky-500/15 px-1.5 py-0.5 text-[9px] font-bold text-sky-700 dark:text-sky-300" title="Only applies when the subject contains this">subj: ${esc(m.subject_contains)}</span>` : ""}
     ${m.promo_sensitive ? `<span class="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:text-amber-300" title="Promo-looking mail detours to Promos">PROMO↗</span>` : ""}
-    <button data-smact="del" data-pattern="${esc(m.pattern)}" class="rounded bg-red-500/15 px-2 py-0.5 text-[10px] font-bold text-red-700 dark:text-red-300" title="Delete mapping">×</button>
-  </li>`).join("") : `<li class="text-xs text-slate-500">No sender mappings yet.</li>`;
+    <button data-smact="del" data-pattern="${esc(m.pattern)}" class="btn btn-ghost text-xs font-bold text-destructive" title="Delete mapping">×</button>
+  </li>`).join("") : `<li class="text-xs text-muted-foreground">No sender mappings yet.</li>`;
 }
 
 function enableDrag() {
@@ -312,10 +312,10 @@ async function loadTraces() {
   try {
     const data = await api("/api/traces" + q);
     const items = data.items || [];
-    el.tracesList.innerHTML = items.length ? items.map((t) => `<li class="rounded border border-slate-200 dark:border-slate-800 px-2 py-1 text-[11px] text-slate-600 dark:text-slate-400">
+     el.tracesList.innerHTML = items.length ? items.map((t) => `<li class="rounded border border-border px-2 py-1 text-xs text-muted-foreground">
       <span class="font-bold">${esc(t.action)}</span> · ${esc(t.subject || t.message_id || "")}
-      <span class="text-slate-400">· ${esc(t.sender_email || "")}${t.rule_id ? " · rule #" + t.rule_id : ""}</span>
-    </li>`).join("") : `<li class="text-xs text-slate-500">No activity yet.</li>`;
+      <span class="text-muted-foreground">· ${esc(t.sender_email || "")}${t.rule_id ? " · rule #" + t.rule_id : ""}</span>
+    </li>`).join("") : `<li class="text-xs text-muted-foreground">No activity yet.</li>`;
   } catch (err) { toast(`Traces failed: ${err.message}`, "err"); }
 }
 

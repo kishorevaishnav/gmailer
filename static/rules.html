@@ -8,31 +8,61 @@
     (function () {
       try {
         var q = new URLSearchParams(window.location.search).get("theme");
-        var t = q || localStorage.getItem("gmailer-theme") || "dark";
-        if (t !== "light") document.documentElement.classList.add("dark");
+        var t = q || localStorage.getItem("gmailer-theme") || "light";
+        if (t === "apple") {
+          document.documentElement.setAttribute("data-theme", "apple");
+        } else if (t !== "light") {
+          document.documentElement.classList.add("dark");
+        }
       } catch (e) {}
     })();
   </script>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config = { darkMode: "class" };</script>
+  <script>tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        colors: {
+          background: "hsl(var(--background))",
+          foreground: "hsl(var(--foreground))",
+          card: { DEFAULT: "hsl(var(--card))", foreground: "hsl(var(--card-foreground))" },
+          primary: { DEFAULT: "hsl(var(--primary))", foreground: "hsl(var(--primary-foreground))" },
+          secondary: { DEFAULT: "hsl(var(--secondary))", foreground: "hsl(var(--secondary-foreground))" },
+          muted: { DEFAULT: "hsl(var(--muted))", foreground: "hsl(var(--muted-foreground))" },
+          accent: { DEFAULT: "hsl(var(--accent))", foreground: "hsl(var(--accent-foreground))" },
+          destructive: { DEFAULT: "hsl(var(--destructive))", foreground: "hsl(var(--destructive-foreground))" },
+          border: "hsl(var(--border))",
+          input: "hsl(var(--input))",
+          ring: "hsl(var(--ring))",
+        },
+        borderRadius: { lg: "var(--radius)", md: "calc(var(--radius) - 2px)", sm: "calc(var(--radius) - 4px)" },
+      },
+    },
+  };
+  </script>
   <link rel="stylesheet" href="/static/app.css" />
   <style>
     .rule-row.dragging { opacity: .5; }
     #ruleMarkdown { font-family: "SF Mono","Fira Code",Consolas,monospace; line-height: 1.6; tab-size: 2; }
   </style>
 </head>
-<body class="bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100 min-h-screen antialiased">
-  <header class="sticky top-0 z-10 border-b border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-900/70 backdrop-blur">
+<body class="bg-background text-foreground min-h-screen antialiased font-sans">
+  <header class="sticky top-0 z-10 border-b border-border bg-card/80 backdrop-blur">
     <div class="mx-auto max-w-6xl px-5 py-3 flex items-center gap-3">
-      <a href="/" class="text-sm font-bold hover:text-violet-600 dark:hover:text-violet-300 transition">← Inbox</a>
-      <h1 class="text-lg font-black tracking-tight">Rules</h1>
-      <span id="ruleCount" class="text-xs text-slate-500"></span>
+      <a href="/" class="text-sm font-bold hover:text-primary transition">← Inbox</a>
+      <h1 class="text-xl font-black tracking-tight">Rules</h1>
+      <span id="ruleCount" class="text-xs text-muted-foreground"></span>
       <div class="ml-auto flex items-center gap-2">
-        <button id="refreshBtn" class="rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-xs hover:border-slate-500 transition">↻ Refresh</button>
-        <button id="newRuleBtn" class="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-violet-700 transition">+ New Rule</button>
+        <button id="themeBtn" class="btn btn-outline text-sm px-2.5 py-1.5 rounded-lg" title="Toggle theme">
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
+          </svg>
+        </button>
+        <button id="refreshBtn" class="btn btn-outline text-sm">↻ Refresh</button>
+        <button id="newRuleBtn" class="btn btn-primary text-sm">+ New Rule</button>
       </div>
     </div>
-    <div class="mx-auto max-w-6xl px-5 pb-2 flex items-center gap-2 text-xs">
+    <div class="mx-auto max-w-6xl px-5 pb-2 flex items-center gap-2 text-sm">
       <button data-tab="rules" class="tabBtn rounded-lg px-3 py-1.5 font-bold">Rules</button>
       <button data-tab="proposals" class="tabBtn rounded-lg px-3 py-1.5 font-bold">Proposals <span id="propBadge"></span></button>
       <button data-tab="wiki" class="tabBtn rounded-lg px-3 py-1.5 font-bold">Observations</button>
@@ -44,80 +74,80 @@
   <main class="mx-auto max-w-6xl px-5 py-5 grid grid-cols-1 lg:grid-cols-2 gap-5">
     <section class="space-y-4 min-w-0">
       <div id="tab-rules" class="space-y-2">
-        <p class="text-[11px] text-slate-500">First match wins — top of the list runs first. Use ▲▼ or drag to reorder.</p>
+        <p class="text-xs text-muted-foreground">First match wins — top of the list runs first. Use ▲▼ or drag to reorder.</p>
         <ul id="rulesList" class="space-y-2"></ul>
-        <p id="rulesEmpty" class="hidden text-sm text-slate-500">No rules yet. Click + New Rule, or Block a sender from the inbox.</p>
+        <p id="rulesEmpty" class="hidden text-sm text-muted-foreground">No rules yet. Click + New Rule, or Block a sender from the inbox.</p>
       </div>
       <div id="tab-proposals" class="hidden space-y-2">
         <ul id="proposalsList" class="space-y-2"></ul>
-        <p id="propsEmpty" class="hidden text-sm text-slate-500">No pending proposals.</p>
+        <p id="propsEmpty" class="hidden text-sm text-muted-foreground">No pending proposals.</p>
       </div>
       <div id="tab-wiki" class="hidden space-y-2">
         <ul id="wikiList" class="space-y-2"></ul>
-        <p id="wikiEmpty" class="hidden text-sm text-slate-500">No observations yet.</p>
+        <p id="wikiEmpty" class="hidden text-sm text-muted-foreground">No observations yet.</p>
       </div>
       <div id="tab-senders" class="hidden space-y-2">
-        <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-3">
+        <div class="rounded-xl border border-border bg-card p-3">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <label class="text-[11px] text-slate-500">Pattern (matches sender email or name)
-              <input id="smPattern" type="text" placeholder="xfinity" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs font-mono" />
+            <label class="text-xs text-muted-foreground">Pattern (matches sender email or name)
+              <input id="smPattern" type="text" placeholder="xfinity" class="mt-1 w-full rounded border border-border bg-background px-2 py-1.5 text-sm font-mono" />
             </label>
-            <label class="text-[11px] text-slate-500">Category
-              <select id="smCategory" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs"></select>
+            <label class="text-xs text-muted-foreground">Category
+              <select id="smCategory" class="mt-1 w-full rounded border border-border bg-background px-2 py-1.5 text-sm"></select>
             </label>
           </div>
-          <label class="mt-2 block text-[11px] text-slate-500">Only when subject contains (optional, comma = any)
-            <input id="smSubject" type="text" placeholder="statement, invoice" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs" />
+          <label class="mt-2 block text-xs text-muted-foreground">Only when subject contains (optional, comma = any)
+            <input id="smSubject" type="text" placeholder="statement, invoice" class="mt-1 w-full rounded border border-border bg-background px-2 py-1.5 text-sm" />
           </label>
-          <label class="mt-2 flex items-center gap-1.5 text-[11px] text-slate-500">
-            <input id="smPromo" type="checkbox" checked class="accent-violet-600" /> Promo-looking mail detours to Promos
+          <label class="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+            <input id="smPromo" type="checkbox" checked class="accent-purple-600" /> Promo-looking mail detours to Promos
           </label>
-          <button id="smAdd" class="mt-2 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-violet-700 transition">Add mapping</button>
+          <button id="smAdd" class="mt-2 btn btn-primary text-sm">Add mapping</button>
         </div>
         <ul id="senderMapList" class="space-y-1"></ul>
-        <p class="text-[11px] text-slate-500">Longest pattern wins. Applies to new mail instantly — ↻ Remap in the inbox re-applies it to everything cached.</p>
+        <p class="text-xs text-muted-foreground">Longest pattern wins. Applies to new mail instantly — ↻ Remap in the inbox re-applies it to everything cached.</p>
       </div>
       <div id="tab-traces" class="hidden space-y-2">
-        <div class="flex items-center gap-2 text-xs">
-          <label class="text-slate-500">Rule</label>
-          <select id="traceRuleFilter" class="rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1 text-xs"></select>
-          <button id="traceReload" class="rounded border border-slate-300 dark:border-slate-700 px-2 py-1 text-xs">Load</button>
+        <div class="flex items-center gap-2 text-sm">
+          <label class="text-muted-foreground">Rule</label>
+          <select id="traceRuleFilter" class="rounded border border-border bg-background px-2 py-1 text-sm"></select>
+          <button id="traceReload" class="btn btn-outline text-sm">Load</button>
         </div>
         <ul id="tracesList" class="space-y-1"></ul>
       </div>
     </section>
 
     <section class="min-w-0">
-      <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-4 lg:sticky lg:top-28">
+      <div class="rounded-xl border border-border bg-card p-4 lg:sticky lg:top-28">
         <div class="flex items-center gap-2 mb-3">
           <h2 id="editorTitle" class="text-sm font-bold flex-1 truncate">New Rule</h2>
-          <span id="editorId" class="text-[10px] text-slate-500 font-mono"></span>
+          <span id="editorId" class="text-xs text-muted-foreground font-mono"></span>
         </div>
         <div class="grid grid-cols-2 gap-2 mb-2">
-          <label class="text-[11px] text-slate-500">Name<input id="fName" type="text" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs" placeholder="Block noisy sender" /></label>
-          <label class="text-[11px] text-slate-500">Senders (email / @domain — JSON list for several)<input id="fSender" type="text" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs font-mono" placeholder='spammer@example.com or ["a@x.com", "@y.com"]' /></label>
-          <label class="text-[11px] text-slate-500">Action<select id="fAction" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs"><option value="trash">trash</option><option value="star">star</option><option value="skip">skip</option></select></label>
-          <label class="text-[11px] text-slate-500">Scope<select id="fScope" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs"><option value="all_mail">all_mail</option><option value="promo_only">promo_only</option></select></label>
-          <label class="text-[11px] text-slate-500">Subject keywords (comma)<input id="fSubject" type="text" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs" placeholder="sale, deal" /></label>
-          <label class="text-[11px] text-slate-500">Categories (comma)<input id="fCategory" type="text" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs" placeholder="Newsletter" /></label>
-          <label class="text-[11px] text-slate-500">Emails/day threshold<input id="fEpd" type="number" min="1" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs" placeholder="" /></label>
-          <label class="text-[11px] text-slate-500 flex items-end gap-2 pb-2"><input id="fEnabled" type="checkbox" checked class="accent-violet-600 h-4 w-4" /> Enabled</label>
+          <label class="text-xs text-muted-foreground">Name<input id="fName" type="text" class="mt-1 w-full rounded border border-border bg-background px-2 py-1.5 text-sm" placeholder="Block noisy sender" /></label>
+          <label class="text-xs text-muted-foreground">Senders (email / @domain — JSON list for several)<input id="fSender" type="text" class="mt-1 w-full rounded border border-border bg-background px-2 py-1.5 text-sm font-mono" placeholder='spammer@example.com or ["a@x.com", "@y.com"]' /></label>
+          <label class="text-xs text-muted-foreground">Action<select id="fAction" class="mt-1 w-full rounded border border-border bg-background px-2 py-1.5 text-sm"><option value="trash">trash</option><option value="star">star</option><option value="skip">skip</option></select></label>
+          <label class="text-xs text-muted-foreground">Scope<select id="fScope" class="mt-1 w-full rounded border border-border bg-background px-2 py-1.5 text-sm"><option value="all_mail">all_mail</option><option value="promo_only">promo_only</option></select></label>
+          <label class="text-xs text-muted-foreground">Subject keywords (comma)<input id="fSubject" type="text" class="mt-1 w-full rounded border border-border bg-background px-2 py-1.5 text-sm" placeholder="sale, deal" /></label>
+          <label class="text-xs text-muted-foreground">Categories (comma)<input id="fCategory" type="text" class="mt-1 w-full rounded border border-border bg-background px-2 py-1.5 text-sm" placeholder="Newsletter" /></label>
+          <label class="text-xs text-muted-foreground">Emails/day threshold<input id="fEpd" type="number" min="1" class="mt-1 w-full rounded border border-border bg-background px-2 py-1.5 text-sm" placeholder="" /></label>
+          <label class="text-xs text-muted-foreground flex items-end gap-2 pb-2"><input id="fEnabled" type="checkbox" checked class="accent-purple-600 h-4 w-4" /> Enabled</label>
         </div>
-        <label class="text-[11px] text-slate-500">About<textarea id="fAbout" rows="2" class="mt-1 w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-xs" placeholder="Why does this rule exist?"></textarea></label>
-        <button id="buildMdBtn" class="mt-2 rounded-lg border border-violet-500/40 px-3 py-1.5 text-xs font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-500/10 transition">↓ Build markdown from form</button>
-        <label class="mt-3 block text-[11px] text-slate-500">Skill markdown (source of truth)
-          <textarea id="ruleMarkdown" rows="12" spellcheck="false" class="mt-1 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 p-3 text-[12px] text-slate-800 dark:text-slate-200 focus:border-violet-500 focus:outline-none"></textarea>
+        <label class="text-xs text-muted-foreground">About<textarea id="fAbout" rows="2" class="mt-1 w-full rounded border border-border bg-background px-2 py-1.5 text-sm" placeholder="Why does this rule exist?"></textarea></label>
+        <button id="buildMdBtn" class="mt-2 rounded-lg border border-primary/40 px-3 py-1.5 text-sm font-bold text-primary hover:bg-primary/10 transition">↓ Build markdown from form</button>
+        <label class="mt-3 block text-xs text-muted-foreground">Skill markdown (source of truth)
+          <textarea id="ruleMarkdown" rows="12" spellcheck="false" class="mt-1 w-full rounded-lg border border-border bg-background text-foreground p-3 text-sm font-mono focus:border-primary focus:outline-none"></textarea>
         </label>
-        <pre id="editorErrors" class="hidden mt-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-[11px] text-red-700 dark:text-red-300 font-mono whitespace-pre-wrap"></pre>
+        <pre id="editorErrors" class="hidden mt-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300 font-mono whitespace-pre-wrap"></pre>
         <div class="mt-3 flex items-center gap-2">
-          <label class="flex items-center gap-1.5 text-[11px] text-slate-500"><input id="applyNow" type="checkbox" class="accent-violet-600" /> Apply now</label>
+          <label class="flex items-center gap-1.5 text-xs text-muted-foreground"><input id="applyNow" type="checkbox" class="accent-purple-600" /> Apply now</label>
           <div class="ml-auto flex gap-2">
-            <button id="cancelBtn" class="rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-xs hover:border-slate-500 transition">Cancel</button>
-            <button id="deleteBtn" class="hidden rounded-lg bg-red-500/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-600 transition">Delete</button>
-            <button id="saveBtn" class="rounded-lg bg-violet-600 px-4 py-1.5 text-xs font-bold text-white hover:bg-violet-700 transition">Save</button>
+            <button id="cancelBtn" class="btn btn-outline text-sm">Cancel</button>
+            <button id="deleteBtn" class="hidden btn btn-destructive text-sm">Delete</button>
+            <button id="saveBtn" class="btn btn-primary text-sm">Save</button>
           </div>
         </div>
-        <div id="ruleStats" class="mt-2 text-[11px] text-slate-500"></div>
+        <div id="ruleStats" class="mt-2 text-xs text-muted-foreground"></div>
       </div>
     </section>
   </main>
@@ -125,5 +155,24 @@
   <div id="toasts" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 items-center"></div>
   <script src="/static/rules.js"></script>
   <script src="/static/dev-reload.js"></script>
+  <script>
+    (function () {
+      var themes = ["light", "dark", "apple"];
+      var btn = document.getElementById("themeBtn");
+      if (!btn) return;
+      function cur() {
+        if (document.documentElement.getAttribute("data-theme") === "apple") return "apple";
+        if (document.documentElement.classList.contains("dark")) return "dark";
+        return "light";
+      }
+      btn.addEventListener("click", function () {
+        var next = themes[(themes.indexOf(cur()) + 1) % themes.length];
+        document.documentElement.classList.toggle("dark", next === "dark");
+        if (next === "apple") document.documentElement.setAttribute("data-theme", "apple");
+        else document.documentElement.removeAttribute("data-theme");
+        try { localStorage.setItem("gmailer-theme", next); } catch (e) {}
+      });
+    })();
+  </script>
 </body>
 </html>

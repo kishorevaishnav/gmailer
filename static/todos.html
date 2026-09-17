@@ -8,37 +8,85 @@
     (function () {
       try {
         var q = new URLSearchParams(window.location.search).get("theme");
-        var t = q || localStorage.getItem("gmailer-theme") || "dark";
-        if (t !== "light") document.documentElement.classList.add("dark");
+        var t = q || localStorage.getItem("gmailer-theme") || "light";
+        if (t === "apple") {
+          document.documentElement.setAttribute("data-theme", "apple");
+        } else if (t !== "light") {
+          document.documentElement.classList.add("dark");
+        }
       } catch (e) {}
     })();
   </script>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config = { darkMode: "class" };</script>
+  <script>tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        colors: {
+          background: "hsl(var(--background))",
+          foreground: "hsl(var(--foreground))",
+          card: { DEFAULT: "hsl(var(--card))", foreground: "hsl(var(--card-foreground))" },
+          primary: { DEFAULT: "hsl(var(--primary))", foreground: "hsl(var(--primary-foreground))" },
+          secondary: { DEFAULT: "hsl(var(--secondary))", foreground: "hsl(var(--secondary-foreground))" },
+          muted: { DEFAULT: "hsl(var(--muted))", foreground: "hsl(var(--muted-foreground))" },
+          accent: { DEFAULT: "hsl(var(--accent))", foreground: "hsl(var(--accent-foreground))" },
+          destructive: { DEFAULT: "hsl(var(--destructive))", foreground: "hsl(var(--destructive-foreground))" },
+          border: "hsl(var(--border))",
+          input: "hsl(var(--input))",
+          ring: "hsl(var(--ring))",
+        },
+        borderRadius: { lg: "var(--radius)", md: "calc(var(--radius) - 2px)", sm: "calc(var(--radius) - 4px)" },
+      },
+    },
+  };</script>
   <link rel="stylesheet" href="/static/app.css" />
 </head>
-<body class="bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100 min-h-screen antialiased">
-  <header class="sticky top-0 z-10 border-b border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-900/70 backdrop-blur">
+<body class="bg-background text-foreground min-h-screen antialiased font-sans">
+  <header class="sticky top-0 z-10 border-b border-border bg-card/80 backdrop-blur">
     <div class="mx-auto max-w-4xl px-5 py-3 flex items-center gap-3">
-      <a href="/" class="text-sm font-bold hover:text-violet-600 dark:hover:text-violet-300 transition">← Inbox</a>
-      <h1 class="text-lg font-black tracking-tight">TODO</h1>
-      <span id="todoCount" class="text-xs text-slate-500"></span>
-      <div class="ml-auto flex items-center gap-2 text-xs">
-        <button data-sort="manual" class="sortBtn rounded-lg px-3 py-1.5 font-bold">Manual</button>
-        <button data-sort="date" class="sortBtn rounded-lg px-3 py-1.5 font-bold">By due date</button>
-        <button id="refreshBtn" class="rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 hover:border-slate-500 transition">↻ Refresh</button>
+      <a href="/" class="text-sm font-bold hover:text-primary transition">← Inbox</a>
+      <h1 class="text-xl font-black tracking-tight">TODO</h1>
+      <span id="todoCount" class="text-xs text-muted-foreground"></span>
+      <div class="ml-auto flex items-center gap-2 text-sm">
+        <button data-sort="manual" class="sortBtn btn btn-ghost font-bold">Manual</button>
+        <button data-sort="date" class="sortBtn btn btn-ghost font-bold">By due date</button>
+        <button id="themeBtn" class="btn btn-outline text-sm px-2.5 py-1.5 rounded-lg" title="Toggle theme">
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
+          </svg>
+        </button>
+        <button id="refreshBtn" class="btn btn-outline text-sm">↻ Refresh</button>
       </div>
     </div>
   </header>
 
   <main class="mx-auto max-w-4xl px-5 py-5">
-    <p class="mb-3 text-[11px] text-slate-500">Parked emails live here until done — each one is also a task in your Google Tasks with the same due date, deleted when you finish. No delete action exists on this page; finishing removes the row, the email itself stays in Gmail.</p>
+    <p class="mb-3 text-xs text-muted-foreground">Parked emails live here until done — each one is also a task in your Google Tasks with the same due date, deleted when you finish. No delete action exists on this page; finishing removes the row, the email itself stays in Gmail.</p>
     <ul id="todoList" class="space-y-2"></ul>
-    <p id="todoEmpty" class="hidden rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-8 text-center text-sm text-slate-500">No TODOs yet. Press <b>T</b> on an email in the inbox, or use its Todo button.</p>
+    <p id="todoEmpty" class="hidden rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">No TODOs yet. Press <b>T</b> on an email in the inbox, or use its Todo button.</p>
   </main>
 
   <div id="toasts" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 items-center"></div>
   <script src="/static/todos.js"></script>
   <script src="/static/dev-reload.js"></script>
+  <script>
+    (function () {
+      var themes = ["light", "dark", "apple"];
+      var btn = document.getElementById("themeBtn");
+      if (!btn) return;
+      function cur() {
+        if (document.documentElement.getAttribute("data-theme") === "apple") return "apple";
+        if (document.documentElement.classList.contains("dark")) return "dark";
+        return "light";
+      }
+      btn.addEventListener("click", function () {
+        var next = themes[(themes.indexOf(cur()) + 1) % themes.length];
+        document.documentElement.classList.toggle("dark", next === "dark");
+        if (next === "apple") document.documentElement.setAttribute("data-theme", "apple");
+        else document.documentElement.removeAttribute("data-theme");
+        try { localStorage.setItem("gmailer-theme", next); } catch (e) {}
+      });
+    })();
+  </script>
 </body>
 </html>

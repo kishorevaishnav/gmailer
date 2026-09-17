@@ -132,7 +132,7 @@ async function api(path, opts = {}) {
 /* ───────────────────────────── Toasts ──────────────────────────── */
 function toast(msg, tone = "info", opts = {}) {
   const colors = {
-    info: "bg-white border-slate-300 text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100",
+    info: "bg-card border-border text-card-foreground",
     err: "bg-red-50 border-red-300 text-red-700 dark:bg-red-950 dark:border-red-600/60 dark:text-red-100",
     ok: "bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-emerald-950 dark:border-emerald-600/60 dark:text-emerald-100",
   };
@@ -141,7 +141,7 @@ function toast(msg, tone = "info", opts = {}) {
   t.innerHTML = `<span>${esc(msg)}</span>`;
   if (opts.undo) {
     const b = document.createElement("button");
-    b.className = "rounded-lg bg-slate-200 text-slate-800 hover:bg-slate-300 dark:bg-slate-700/70 dark:text-white dark:hover:bg-slate-600 px-2.5 py-1 text-xs font-bold transition";
+    b.className = "btn btn-outline text-sm";
     b.textContent = "Undo";
     b.onclick = () => { (opts.undoFn || undoLast)(); dismiss(); };
     t.appendChild(b);
@@ -160,9 +160,10 @@ function clearToasts() {
 }
 
 /* ───────────────────────────── Theme ───────────────────────────── */
-const THEMES = ["dark", "light"];
+const THEMES = ["light", "dark", "apple"];
 
 function currentTheme() {
+  if (document.documentElement.getAttribute("data-theme") === "apple") return "apple";
   if (document.documentElement.classList.contains("dark")) return "dark";
   return "light";
 }
@@ -171,12 +172,17 @@ function applyThemeUI() {
   const t = currentTheme();
   el.themeIconMoon.classList.toggle("hidden", t !== "dark");
   el.themeIconSun.classList.toggle("hidden", t !== "light");
-  el.themeBtn.title = t === "dark" ? "Theme: dark — click for light" : "Theme: light — click for dark";
+  el.themeBtn.title = `Theme: ${t} — click to switch`;
 }
 
 function toggleTheme() {
   const next = THEMES[(THEMES.indexOf(currentTheme()) + 1) % THEMES.length];
   document.documentElement.classList.toggle("dark", next === "dark");
+  if (next === "apple") {
+    document.documentElement.setAttribute("data-theme", "apple");
+  } else {
+    document.documentElement.removeAttribute("data-theme");
+  }
   try { localStorage.setItem("gmailer-theme", next); } catch (e) {}
   applyThemeUI();
 }
@@ -542,32 +548,32 @@ function renderHistory() {
 function opLine(o) {
   const icon = o.status === "running" ? "🕐" : o.status === "done" ? "✓" : "✕";
   const tone = o.status === "running"
-    ? "text-violet-700 dark:text-violet-300"
+    ? "text-primary"
     : o.status === "done"
       ? "text-emerald-600 dark:text-emerald-400"
-      : "text-red-600 dark:text-red-400";
-  const runningCls = o.status === "running" ? "border-violet-500/40 bg-violet-500/10" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60";
+      : "text-destructive dark:text-red-400";
+  const runningCls = o.status === "running" ? "border-primary/40 bg-primary/10" : "border-border bg-card";
   const dim = o.status === "done" || o.status === "failed" ? " opacity-70" : "";
   return `
     <div class="rounded-lg border px-3 py-1.5 flex items-center gap-2 ${runningCls}${dim}">
-      <span class="text-xs ${tone} flex items-center gap-1.5 min-w-0">
+      <span class="text-sm ${tone} flex items-center gap-1.5 min-w-0">
         <span class="shrink-0">${icon}</span>
         <span class="truncate">${esc(o.label)}</span>
       </span>
-      ${o.status === "running" ? `<span class="ml-auto shrink-0 text-[9px] text-slate-400 italic">in progress…</span>` : ""}
+      ${o.status === "running" ? `<span class="ml-auto shrink-0 text-xs text-muted-foreground italic">in progress…</span>` : ""}
     </div>`;
 }
 
 function renderPendingOps() {
   const pendingHTML = state.pendingOps.map(opLine).join("");
   const historyHTML = state.history.slice(0, 3).map((h, i) => `
-    <div class="rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60 px-3 py-2 flex items-center gap-2">
-      <span class="text-xs text-slate-600 dark:text-slate-400 flex-1 truncate">${esc(h.label)}</span>
-      <button data-undo="${i}" class="rounded bg-violet-500/15 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-500/30 transition">Undo</button>
+    <div class="rounded-lg border border-border bg-card px-3 py-2 flex items-center gap-2">
+      <span class="text-sm text-muted-foreground flex-1 truncate">${esc(h.label)}</span>
+      <button data-undo="${i}" class="btn btn-outline text-xs px-2 py-1 text-primary hover:bg-primary/10">Undo</button>
     </div>
   `).join("");
   el.historyList.innerHTML = (pendingHTML + historyHTML)
-    || `<p class="text-xs text-slate-500 dark:text-slate-600">No actions yet. D to delete, E to archive.</p>`;
+    || `<p class="text-sm text-muted-foreground">No actions yet. D to delete, E to archive.</p>`;
 
   el.historyList.querySelectorAll("[data-undo]").forEach((btn) => {
     btn.addEventListener("click", () => undoIndex(parseInt(btn.dataset.undo, 10)));
@@ -719,9 +725,9 @@ function categoryCounts() {
 }
 
 function paintViewToggle() {
-  const on = "bg-violet-500/20 text-violet-700 dark:text-violet-300";
-  const off = "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200";
-  const cls = (active) => `rounded-md px-2 py-1 text-[10px] font-bold transition ${active ? on : off}`;
+  const on = "bg-primary/20 text-primary";
+  const off = "text-muted-foreground hover:text-foreground";
+  const cls = (active) => `rounded-md px-3 py-1.5 text-xs font-bold transition ${active ? on : off}`;
   if (el.viewSendersBtn) el.viewSendersBtn.className = cls(state.viewMode === "senders");
   if (el.viewCatsBtn) el.viewCatsBtn.className = cls(state.viewMode === "categories");
   if (el.viewThreadsBtn) el.viewThreadsBtn.className = cls(state.viewMode === "threads");
@@ -757,20 +763,20 @@ function renderThreadRows() {
     const active = state.activeThreadId === t.tid;
     const when = t.lastMs ? timeAgo(new Date(t.lastMs).toISOString()) : "";
     return `
-    <li class="rounded-lg border ${active ? "border-violet-500/60 bg-violet-500/10" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60"} px-3 py-2 cursor-pointer select-none transition hover:bg-slate-100 dark:hover:bg-slate-800/70" data-thread="${esc(t.tid)}">
+    <li class="rounded-lg border ${active ? "border-primary/60 bg-primary/10" : "border-border bg-card"} px-3 py-2 cursor-pointer select-none transition hover:bg-muted" data-thread="${esc(t.tid)}">
       <div class="flex items-center gap-2">
-        <p class="min-w-0 flex-1 ${active ? "text-violet-800 dark:text-violet-200" : "text-slate-800 dark:text-slate-200"}">
-          <span class="block truncate text-[13px] font-semibold">${esc(t.subject)}</span>
-          <span class="block truncate text-[10px] text-slate-500 dark:text-slate-400">${esc(t.names.slice(0, 3).join(", "))}${t.names.length > 3 ? ` +${t.names.length - 3} more` : ""}</span>
+        <p class="min-w-0 flex-1 ${active ? "text-primary" : "text-foreground"}">
+          <span class="block truncate text-sm font-semibold">${esc(t.subject)}</span>
+          <span class="block truncate text-xs text-muted-foreground">${esc(t.names.slice(0, 3).join(", "))}${t.names.length > 3 ? ` +${t.names.length - 3} more` : ""}</span>
         </p>
-        <span class="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">${t.items.length}</span>
+        <span class="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-xs font-bold text-primary">${t.items.length}</span>
       </div>
       <div class="mt-0.5 flex items-center gap-2">
-        <p class="min-w-0 flex-1 truncate text-[11px] text-slate-500 dark:text-slate-500">${esc(t.latest.snippet || t.latest.preview || "")}</p>
-        ${when ? `<span class="shrink-0 text-[10px] text-slate-400 dark:text-slate-600">${esc(when)}</span>` : ""}
+        <p class="min-w-0 flex-1 truncate text-xs text-muted-foreground">${esc(t.latest.snippet || t.latest.preview || "")}</p>
+        ${when ? `<span class="shrink-0 text-xs text-muted-foreground">${esc(when)}</span>` : ""}
       </div>
     </li>`;
-  }).join("") : `<li class="text-xs text-slate-500 dark:text-slate-600">No threads yet.</li>`;
+  }).join("") : `<li class="text-sm text-muted-foreground">No threads yet.</li>`;
 }
 
 function selectThread(tid) {
@@ -785,7 +791,7 @@ function renderThreadView() {
   el.groupHeader.classList.toggle("hidden", !t);
   if (!t) {
     state.visibleEmails = [];
-    el.emailCards.innerHTML = `<p class="text-sm text-slate-500 dark:text-slate-600 p-6">Pick a thread on the left.</p>`;
+    el.emailCards.innerHTML = `<p class="text-sm text-muted-foreground p-6">Pick a thread on the left.</p>`;
     return;
   }
   state.visibleEmails = t.items;
@@ -812,8 +818,7 @@ function renderGroups() {
   let rows = "";
   if (singleIds.length) rows += groupRow({ key: "singles", label: "Singles", ids: singleIds });
   rows += groups.map(groupRow).join("");
-  if (!rows) rows = `<li class="text-xs text-slate-500 dark:text-slate-600">No repeat senders yet.</li>`;
-  el.groupList.innerHTML = rows;
+  el.groupList.innerHTML = rows || `<li class="text-sm text-muted-foreground">No repeat senders yet.</li>`;
 }
 
 function renderCategoryRows() {
@@ -824,11 +829,11 @@ function renderCategoryRows() {
   el.groupList.innerHTML = counts.length ? counts.map(([cat, n]) => {
     const active = state.activeCatGroup === cat;
     return `
-    <li class="rounded-lg border ${active ? "border-violet-500/60 bg-violet-500/10" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60"} px-3 py-2 flex items-center gap-2 cursor-pointer select-none transition hover:bg-slate-100 dark:hover:bg-slate-800/70" data-catgroup="${esc(cat)}">
-      <p class="min-w-0 flex-1 text-[13px] font-semibold ${active ? "text-violet-800 dark:text-violet-200" : "text-slate-800 dark:text-slate-200"} truncate">${esc(cat)}</p>
-      <span class="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">${n}</span>
+    <li class="rounded-lg border ${active ? "border-primary/60 bg-primary/10" : "border-border bg-card"} px-3 py-2 flex items-center gap-2 cursor-pointer select-none transition hover:bg-muted" data-catgroup="${esc(cat)}">
+      <p class="min-w-0 flex-1 text-sm font-semibold ${active ? "text-primary" : "text-foreground"} truncate">${esc(cat)}</p>
+      <span class="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-xs font-bold text-primary">${n}</span>
     </li>`;
-  }).join("") : `<li class="text-xs text-slate-500 dark:text-slate-600">No categorized emails yet.</li>`;
+  }).join("") : `<li class="text-sm text-muted-foreground">No categorized emails yet.</li>`;
 }
 
 function selectCategoryGroup(cat) {
@@ -843,7 +848,7 @@ function renderCategoryGroupView() {
   el.groupHeader.classList.toggle("hidden", !cat);
   if (!cat) {
     state.visibleEmails = [];
-    el.emailCards.innerHTML = `<p class="text-sm text-slate-500 dark:text-slate-600 p-6">Pick a category on the left.</p>`;
+    el.emailCards.innerHTML = `<p class="text-sm text-muted-foreground p-6">Pick a category on the left.</p>`;
     return;
   }
   const emails = state.queue.filter((it) => (emailCategory(it) || "Uncategorized") === cat);
@@ -854,7 +859,7 @@ function renderCategoryGroupView() {
     el.groupTitle.textContent = cat;
     el.groupCount.textContent = "0 emails";
     el.groupOverview.textContent = `Every “${cat}” email in this batch.`;
-    el.emailCards.innerHTML = `<p class="text-sm text-slate-500 dark:text-slate-600 p-6">No emails in this category right now.</p>`;
+    el.emailCards.innerHTML = `<p class="text-sm text-muted-foreground p-6">No emails in this category right now.</p>`;
     return;
   }
   const senders = new Map();
@@ -887,16 +892,16 @@ function renderCategoryGroupView() {
   el.groupCount.textContent = `${emails.length} email${emails.length === 1 ? "" : "s"}`;
   el.groupOverview.textContent = `${groups.length} sender${groups.length === 1 ? "" : "s"} · newest first`;
   el.emailCards.innerHTML = groups.map((g) => `
-    <div class="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-      <div class="flex items-center gap-2 px-3 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60">
-        <span class="min-w-0 flex-1 truncate text-[13px] font-bold text-slate-800 dark:text-slate-200">${esc(g.label)}</span>
-        ${g.domain ? `<span class="shrink-0 rounded-md bg-sky-500/15 px-1.5 py-px font-mono text-[10px] font-bold text-sky-700 dark:text-sky-300">@${esc(g.domain)}</span>` : ""}
-        <span class="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">${g.items.length}</span>
-        ${g.domain ? `<button data-domain-del="${esc(g.domain)}" class="shrink-0 rounded bg-red-500/15 px-1.5 py-0.5 text-[9px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition">Trash domain</button>` : ""}
+    <div class="rounded-xl border border-border overflow-hidden">
+      <div class="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted">
+        <span class="min-w-0 flex-1 truncate text-sm font-bold text-foreground">${esc(g.label)}</span>
+        ${g.domain ? `<span class="shrink-0 rounded-md bg-sky-500/15 px-1.5 py-px font-mono text-xs font-bold text-sky-700 dark:text-sky-300">@${esc(g.domain)}</span>` : ""}
+        <span class="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-xs font-bold text-primary">${g.items.length}</span>
+        ${g.domain ? `<button data-domain-del="${esc(g.domain)}" class="shrink-0 btn btn-ghost text-xs px-2 py-0.5 text-red-700 dark:text-red-300 hover:bg-red-500/10">Trash domain</button>` : ""}
       </div>
       <div class="p-2 space-y-2">
         ${g.threads.map((t) => `
-          ${(t.items.length > 1 || g.threads.length > 1) ? `<div class="px-1 pt-1 text-[11px] font-semibold text-slate-500 dark:text-slate-400 truncate">${esc(t.items[t.items.length - 1].subject || "(no subject)")} · ${t.items.length} message${t.items.length === 1 ? "" : "s"}</div>` : ""}
+          ${(t.items.length > 1 || g.threads.length > 1) ? `<div class="px-1 pt-1 text-xs font-semibold text-muted-foreground truncate">${esc(t.items[t.items.length - 1].subject || "(no subject)")} · ${t.items.length} message${t.items.length === 1 ? "" : "s"}</div>` : ""}
           ${t.items.map(emailCard).join("")}
         `).join("")}
       </div>
@@ -910,18 +915,18 @@ function groupRow(g) {
     const items = state.queue.filter((i) => g.ids.includes(i.id));
     const nPromo = items.filter((i) => i.promo).length;
     if (items.length && nPromo / items.length > 0.5) {
-      promo = `<span class="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:text-amber-300">PROMO</span>`;
+      promo = `<span class="shrink-0 rounded bg-amber-500/15 px-2 py-0.5 text-xs font-bold text-amber-700 dark:text-amber-300">PROMO</span>`;
     }
   }
   let delBtn = "";
   if (g.key !== "singles") {
-    delBtn = `<button data-gdel="${esc(g.key)}" class="shrink-0 rounded-lg bg-red-500/15 px-1.5 py-0.5 text-[9px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition" title="Delete all ${g.ids.length} from this sender">🗑</button>`;
+    delBtn = `<button data-gdel="${esc(g.key)}" class="shrink-0 rounded-lg bg-red-500/15 px-2 py-0.5 text-xs font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition" title="Delete all ${g.ids.length} from this sender">🗑</button>`;
   }
   return `
-    <li class="group-row rounded-lg border ${active ? "border-violet-500/60 bg-violet-500/10" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60"} px-3 py-2 flex items-center gap-2 cursor-pointer select-none transition hover:bg-slate-100 dark:hover:bg-slate-800/70" data-group="${esc(g.key)}"${active ? ` data-active="yes"` : ""}>
-      <p class="min-w-0 flex-1 text-[13px] font-semibold ${active ? "text-violet-800 dark:text-violet-200" : "text-slate-800 dark:text-slate-200"} truncate">${esc(g.label)}</p>
+    <li class="group-row rounded-lg border ${active ? "border-primary/60 bg-primary/10" : "border-border bg-card"} px-3 py-2 flex items-center gap-2 cursor-pointer select-none transition hover:bg-muted" data-group="${esc(g.key)}"${active ? ` data-active="yes"` : ""}>
+      <p class="min-w-0 flex-1 text-sm font-semibold ${active ? "text-primary" : "text-foreground"} truncate">${esc(g.label)}</p>
       ${promo}
-      <span class="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">${g.ids.length}</span>
+      <span class="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-xs font-bold text-primary">${g.ids.length}</span>
       ${delBtn}
     </li>`;
 }
@@ -1036,9 +1041,9 @@ function renderSearchView() {
   el.groupOverview.textContent = "Local cache (subject · sender · body) + current batch. Esc clears.";
   el.bulkDeleteBtn.classList.add("hidden");
   el.bulkArchiveBtn.classList.add("hidden");
-  el.emailCards.innerHTML = results.length
+  el.groupList.innerHTML = results.length
     ? results.map(emailCard).join("")
-    : `<p class="text-sm text-slate-500 dark:text-slate-600 p-6">No matches for “${esc(q)}”.</p>`;
+    : `<p class="text-sm text-muted-foreground p-6">No matches for "${esc(q)}".</p>`;
 }
 
 /* ───────────────────────────── Group view (middle pane) ──────────── */
@@ -1046,7 +1051,7 @@ function renderGroupView() {
   const key = state.activeGroupKey;
   el.groupHeader.classList.toggle("hidden", key === null);
   if (key === null) {
-    el.emailCards.innerHTML = `<p class="text-sm text-slate-500 dark:text-slate-600 p-6">Pick a group on the left, or load more from the inbox.</p>`;
+    el.emailCards.innerHTML = `<p class="text-sm text-muted-foreground p-6">Pick a group on the left, or load more from the inbox.</p>`;
     return;
   }
   if (key === "singles") {
@@ -1082,7 +1087,7 @@ function renderGroupView() {
   el.groupOverview.textContent = overview;
   el.emailCards.innerHTML = visible.length
     ? visible.map(emailCard).join("")
-    : `<p class="text-sm text-slate-500 dark:text-slate-600 p-6">This group is empty now.</p>`;
+    : `<p class="text-sm text-muted-foreground p-6">This group is empty now.</p>`;
 
   if (key === "singles") {
     scheduleSingleSummarize(visible.filter((it) => !(it.summary && it.summary.one_liner)).slice(0, 30).map((it) => it.id));
@@ -1096,10 +1101,10 @@ function emailCategory(it) { return (it.summary && it.summary.category) || it.ca
 function tokenPill(s) {
   if (!s) return "";
   if (s.mock) {
-    return `<span class="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-300">OFFLINE FALLBACK</span>`;
+    return `<span class="shrink-0 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-xs font-bold text-amber-700 dark:text-amber-300">OFFLINE FALLBACK</span>`;
   }
   if (!s.tokens_in && !s.tokens_out) return "";
-  return `<span class="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">in ${s.tokens_in || 0} tok · out ${s.tokens_out || 0} tok · ${((s.latency_ms || 0) / 1000).toFixed(1)}s</span>`;
+  return `<span class="shrink-0 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-xs font-bold text-emerald-700 dark:text-emerald-300">in ${s.tokens_in || 0} tok · out ${s.tokens_out || 0} tok · ${((s.latency_ms || 0) / 1000).toFixed(1)}s</span>`;
 }
 
 function emailCard(it) {
@@ -1110,12 +1115,12 @@ function emailCard(it) {
   const politics = !!(it.is_politics || sum.is_politics);
 
   const categoryChip = cat
-    ? `<span class="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[9px] font-bold text-violet-700 dark:text-violet-300" ${it.category_locked ? `title="Manually set — bulk Remap skips it"` : ""}>${it.category_locked ? "🔒 " : ""}${esc(cat)}</span>` : "";
+    ? `<span class="shrink-0 rounded border border-primary/40 bg-primary/5 px-2 py-0.5 text-xs font-semibold text-primary truncate" ${it.category_locked ? `title="Manually set — bulk Remap skips it"` : ""}>${it.category_locked ? "🔒 " : ""}${esc(cat)}</span>` : "";
   const promoBadge = it.promo
-    ? `<span class="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:text-amber-300">PROMO</span>` : "";
+    ? `<span class="shrink-0 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300">PROMO</span>` : "";
   const isTodo = state.todoIds.has(it.id);
   const todoBadge = isTodo
-    ? `<span class="shrink-0 rounded bg-sky-500/15 px-1.5 py-0.5 text-[9px] font-bold text-sky-700 dark:text-sky-300">TODO</span>` : "";
+    ? `<span class="shrink-0 rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-xs font-semibold text-sky-700 dark:text-sky-300">TODO</span>` : "";
   const inQueue = state.queue.some((x) => x.id === it.id);
   const domain = ((it.sender_email || "").split("@")[1] || "").toLowerCase();
   const attCount = ((it.attachments) || []).length;
@@ -1123,55 +1128,58 @@ function emailCard(it) {
   let summaryHTML;
   if (sum.one_liner) {
     const bullets = (sum.bullets || []).length
-      ? `<ul class="mt-1 space-y-0.5 text-[12px] text-slate-500 dark:text-slate-500 line-clamp-6">${sum.bullets.map((b) => `<li class="flex gap-1.5"><span class="text-violet-500">▸</span><span>${esc(b)}</span></li>`).join("")}</ul>` : "";
-    summaryHTML = `<div class="mt-1.5 flex items-center gap-2 flex-wrap"><p class="text-sm text-slate-700 dark:text-slate-300 font-medium leading-relaxed">${esc(sum.one_liner)}</p>${tokenPill(sum)}</div>${bullets}`;
+      ? `<ul class="mt-1.5 space-y-1 text-sm text-muted-foreground line-clamp-6">${sum.bullets.map((b) => `<li class="flex gap-1.5"><span class="text-primary">▸</span><span>${esc(b)}</span></li>`).join("")}</ul>` : "";
+    summaryHTML = `<div class="mt-2 flex items-center gap-2 flex-wrap"><p class="text-base text-foreground font-medium leading-relaxed">${esc(sum.one_liner)}</p>${tokenPill(sum)}</div>${bullets}`;
   } else {
     summaryHTML = `<div class="mt-2 shimmer h-4 w-full"></div>`;
   }
 
   const previewHTML = it.preview
-    ? `<p class="mt-1 text-[12px] text-slate-500 dark:text-slate-500 line-clamp-3 leading-relaxed">${esc(it.preview)}</p>` : "";
+    ? `<p class="mt-1.5 text-sm text-muted-foreground line-clamp-3 leading-relaxed">${esc(it.preview)}</p>` : "";
 
   const badges = [];
-  if (sum.action_needed === "pay") badges.push(`<span class="rounded bg-red-500/15 px-1.5 py-0.5 text-[9px] font-bold text-red-700 dark:text-red-300">PAYMENT</span>`);
-  if (sum.action_needed === "respond" || sum.action_needed === "review") badges.push(`<span class="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:text-amber-300">${esc(sum.action_needed.toUpperCase())}</span>`);
-  if (sum.money) badges.push(`<span class="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700 dark:text-emerald-300 max-w-[180px] truncate">${esc(sum.money)}</span>`);
-  if (sum.opinion_bias === "negative" || sum.opinion_bias === "biased") badges.push(`<span class="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:text-amber-300">−ve opinions</span>`);
-  if (sum.ai_eng_relevance) badges.push(`<span class="rounded bg-violet-500/15 px-1.5 py-0.5 text-[9px] font-bold text-violet-700 dark:text-violet-300">AI/ENG</span>`);
-  if (politics) badges.push(`<span class="rounded bg-slate-500/15 px-1.5 py-0.5 text-[9px] font-bold text-slate-600 dark:text-slate-400">POLITICS (ignored)</span>`);
-  const badgesHTML = badges.length ? `<div class="mt-1.5 flex items-center gap-1 flex-wrap">${badges.join("")}</div>` : "";
+  if (sum.action_needed === "pay") badges.push(`<span class="shrink-0 rounded border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-xs font-semibold text-red-700 dark:text-red-300">💰 PAYMENT</span>`);
+  if (sum.action_needed === "respond" || sum.action_needed === "review") badges.push(`<span class="shrink-0 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300">${esc(sum.action_needed.toUpperCase())}</span>`);
+  if (sum.money) badges.push(`<span class="shrink-0 rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 max-w-[180px] truncate">${esc(sum.money)}</span>`);
+  if (sum.opinion_bias === "negative" || sum.opinion_bias === "biased") badges.push(`<span class="shrink-0 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300">−ve opinions</span>`);
+  if (sum.ai_eng_relevance) badges.push(`<span class="shrink-0 rounded border border-primary/40 bg-primary/5 px-2 py-0.5 text-xs font-semibold text-primary">AI/ENG</span>`);
+  if (politics) badges.push(`<span class="shrink-0 rounded border border-slate-500/40 bg-slate-500/10 px-2 py-0.5 text-xs font-semibold text-slate-600 dark:text-slate-400">POLITICS (ignored)</span>`);
+  const primaryBtns = `
+    <button data-cardact="trash" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">${isTodo ? "" : ""}Delete</button>
+    <button data-cardact="archive" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">Archive</button>
+    <button data-cardact="star" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">Star</button>`;
 
-  const btns = `
-    <button data-cardact="archive" data-id="${esc(it.id)}" class="rounded bg-emerald-500/15 px-2 py-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/30 transition">Archive</button>
-    ${isTodo ? "" : `<button data-cardact="trash" data-id="${esc(it.id)}" class="rounded bg-red-500/15 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition">Delete</button>`}
-    <button data-cardact="star" data-id="${esc(it.id)}" class="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition">Star</button>
-    <button data-cardact="skip" data-id="${esc(it.id)}" class="rounded bg-slate-500/15 px-2 py-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-500/30 transition">Skip</button>
-    <button data-cardact="todo" data-id="${esc(it.id)}" class="rounded bg-sky-500/15 px-2 py-1 text-[10px] font-bold text-sky-700 dark:text-sky-300 hover:bg-sky-500/30 transition">${isTodo ? "✓ Todo" : "Todo"}</button>
-    ${inQueue ? `<button data-cardact="keep" data-id="${esc(it.id)}" class="rounded bg-slate-500/15 px-2 py-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-500/30 transition">Keep</button>` : ""}
-    <a href="https://mail.google.com/mail/u/0/#inbox/${esc(it.id)}" target="_blank" rel="noopener noreferrer" class="rounded bg-slate-500/15 px-2 py-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-500/30 transition" title="Open in Gmail">Gmail ↗</a>
-    <button data-cardact="recat" data-id="${esc(it.id)}" class="rounded bg-slate-500/15 px-2 py-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-500/30 transition" title="Set or re-evaluate this email's category">⟳</button>
-    <button data-cardact="ruleBlock" data-id="${esc(it.id)}" class="rounded bg-red-500/15 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition">Block</button>
-    ${it.promo ? `<button data-cardact="rulePromoBlock" data-id="${esc(it.id)}" class="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition">Auto-del promos</button>` : ""}
-    <button data-cardact="regen" data-id="${esc(it.id)}" class="rounded bg-violet-500/15 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-500/30 transition" title="Regenerate AI summary">↻ Regen</button>`;
+  const moreActions = expanded ? `
+    <div class="mt-2 flex items-center gap-1.5 flex-wrap">
+      <button data-cardact="skip" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">Skip for now</button>
+      <button data-cardact="todo" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">${isTodo ? "✓ Todo" : "Todo"}</button>
+      <button data-cardact="recat" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5" title="Set or re-evaluate this email's category">Category</button>
+      <button data-cardact="regen" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5" title="Regenerate AI summary">↻ Regen</button>
+      <button data-cardact="ruleBlock" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">Block sender</button>
+      ${it.promo ? `<button data-cardact="rulePromoBlock" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">Auto-del promos</button>` : ""}
+      <a href="https://mail.google.com/mail/u/0/#inbox/${esc(it.id)}" target="_blank" rel="noopener noreferrer" class="btn btn-outline text-sm py-1.5" title="Open in Gmail">Gmail ↗</a>
+    </div>` : "";
 
   return `
-    <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-3 transition group-card ${politics ? "opacity-60" : ""}" data-expand="${esc(it.id)}" data-expanded="${expanded}">
-      <div class="flex items-center gap-2 flex-wrap cursor-pointer" data-expand="${esc(it.id)}">
-        ${categoryChip} ${promoBadge} ${todoBadge}
-        <p class="min-w-0 flex-1 text-sm font-bold text-slate-800 dark:text-slate-200 truncate">${esc(it.subject || "(no subject)")}</p>
+    <div class="rounded-xl border border-border bg-card p-4 transition group-card ${politics ? "opacity-60" : ""}" data-expand="${esc(it.id)}" data-expanded="${expanded}">
+      <div class="flex items-center gap-1.5 text-sm text-muted-foreground min-w-0 cursor-pointer" data-expand="${esc(it.id)}">
+        <span class="font-semibold truncate">${esc(sender)}</span>
+        ${domain ? `<span class="shrink-0 rounded-md border border-sky-500/30 bg-sky-500/5 px-1.5 py-px font-mono text-xs font-semibold text-sky-700 dark:text-sky-300" title="${esc(it.sender_email || "")}">@${esc(domain)}</span>` : ""}
+        ${attCount ? `<span class="shrink-0 rounded-md border border-primary/30 bg-primary/5 px-1.5 py-px text-xs font-semibold text-primary" title="${attCount} attachment${attCount === 1 ? "" : "s"} — expand to download">📎${attCount}</span>` : ""}
       </div>
-      <div class="flex items-center gap-1.5 text-[11px] min-w-0 cursor-pointer" data-expand="${esc(it.id)}">
-        <span class="truncate font-semibold text-slate-600 dark:text-slate-300">${esc(sender)}</span>
-        ${domain ? `<span class="shrink-0 rounded-md bg-sky-500/15 px-1.5 py-px font-mono text-[10px] font-bold text-sky-700 dark:text-sky-300" title="${esc(it.sender_email || "")}">@${esc(domain)}</span>` : ""}
-        ${attCount ? `<span class="shrink-0 rounded-md bg-violet-500/15 px-1.5 py-px text-[10px] font-bold text-violet-700 dark:text-violet-300" title="${attCount} attachment${attCount === 1 ? "" : "s"} — expand to download">📎${attCount}</span>` : ""}
+      <div class="flex items-center gap-1.5 flex-wrap mt-1 cursor-pointer" data-expand="${esc(it.id)}">
+        ${categoryChip} ${promoBadge} ${todoBadge}
+        <p class="min-w-0 flex-1 text-base font-bold text-foreground truncate">${esc(it.subject || "(no subject)")}</p>
       </div>
       ${summaryHTML}
       ${previewHTML}
-      ${badgesHTML}
-      <div class="mt-2 flex items-center gap-1.5 flex-wrap">
-        ${btns}
-        <span class="ml-auto text-[10px] text-slate-400 dark:text-slate-600 cursor-pointer" data-expand="${esc(it.id)}">${expanded ? "collapse ▴" : "open ▾"}</span>
+      ${badges.length ? `<div class="mt-2 flex items-center gap-1.5 flex-wrap">${badges.join("")}</div>` : ""}
+      <div class="mt-3 flex items-center gap-1.5">
+        ${primaryBtns}
+        ${inQueue ? `<button data-cardact="keep" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">Keep</button>` : ""}
+        <span class="ml-auto text-xs text-muted-foreground cursor-pointer" data-expand="${esc(it.id)}">${expanded ? "collapse ▴" : "open ▾"}</span>
       </div>
+      ${moreActions}
       ${expanded ? detailHTML(it) : ""}
     </div>`;
 }
@@ -1190,9 +1198,9 @@ function detailHTML(it) {
   const attChip = (a) => {
     const url = `/api/messages/${esc(it.id)}/attachments/${esc(a.attachmentId)}`;
     const mime = a.mimeType || "";
-    return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="rounded-lg bg-violet-500/15 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-500/30 transition" title="${esc(mime || "file")} · ${fmtSize(a.size)} — fetches from Gmail only when clicked, never stored">📎 ${esc(a.filename || "attachment")} <span class="opacity-70 font-normal">${fmtSize(a.size)}</span></a>`;
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="btn btn-outline text-sm py-1.5" title="${esc(mime || "file")} · ${fmtSize(a.size)} — fetches from Gmail only when clicked, never stored">📎 ${esc(a.filename || "attachment")} <span class="opacity-70 font-normal">(${fmtSize(a.size)})</span></a>`;
   };
-  const attHTML = atts.length ? `<div class="mt-2 flex items-start gap-1.5 flex-wrap">${atts.map(attChip).join("")}</div>` : "";
+  const attHTML = atts.length ? `<div class="mt-3 flex flex-wrap items-start gap-1.5">${atts.map(attChip).join("")}</div>` : "";
   const sum = (d && d.summary) || null;
   const sender = (d && d.sender_email) || it.sender_email || "";
   const dateMs = (d && d.internal_date_ms) || it.internal_date_ms;
@@ -1200,11 +1208,11 @@ function detailHTML(it) {
   const bodyHTML = !d
     ? `<div class="mt-2 shimmer h-4 w-full"></div><div class="mt-2 shimmer h-4 w-3/4"></div><div class="mt-2 shimmer h-4 w-5/6"></div>`
     : d.body_text
-      ? `<div class="email-body mt-2 max-w-none leading-relaxed text-slate-700 dark:text-slate-300 selection:bg-violet-500/20">${linkify(d.body_text)}</div>${d.body_truncated ? `<p class="mt-2 text-xs text-amber-600 dark:text-amber-400/80">Body truncated at 80k chars for speed.</p>` : ""}`
-      : `<div class="email-body mt-2 text-slate-700 dark:text-slate-300">(no extractable text)</div>`;
+      ? `<div class="email-body mt-2 max-w-none leading-relaxed text-foreground selection:bg-primary/20">${linkify(d.body_text)}</div>${d.body_truncated ? `<p class="mt-2 text-sm text-amber-600 dark:text-amber-400">Body truncated at 80k chars for speed.</p>` : ""}`
+      : `<div class="email-body mt-2 text-foreground">(no extractable text)</div>`;
   return `
-    <div class="mt-3 border-t border-slate-200 dark:border-slate-800 pt-3">
-      <div class="flex items-center gap-2 flex-wrap text-[12px] text-slate-500 dark:text-slate-400">
+    <div class="mt-4 border-t border-border pt-4">
+      <div class="flex items-center gap-2 flex-wrap text-sm text-muted-foreground">
         <span class="font-mono truncate">${esc(sender)}</span>
         <span>·</span>
         <span>${esc(date)}</span>
@@ -1212,9 +1220,9 @@ function detailHTML(it) {
       </div>
       ${attHTML}
       ${bodyHTML}
-      <div class="mt-2 flex items-center gap-1.5">
-        <button data-cardact="ruleBlock" data-id="${esc(it.id)}" class="rounded bg-red-500/15 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition">Block sender</button>
-        ${it.promo ? `<button data-cardact="rulePromoBlock" data-id="${esc(it.id)}" class="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition">Auto-del promos</button>` : ""}
+      <div class="mt-3 flex items-center gap-1.5">
+        <button data-cardact="ruleBlock" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">Block sender</button>
+        ${it.promo ? `<button data-cardact="rulePromoBlock" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">Auto-del promos</button>` : ""}
       </div>
     </div>`;
 }
