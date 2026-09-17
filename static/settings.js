@@ -23,10 +23,10 @@ let originals = {};
 function toast(msg, tone = "info") {
   const t = document.createElement("div");
   t.className = "rounded-xl border px-4 py-2 text-sm shadow-xl " + (tone === "err"
-    ? "bg-red-50 border-red-300 text-red-700 dark:bg-red-950 dark:border-red-600/60 dark:text-red-100"
+    ? "bg-red-50 border-red-300 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-100"
     : tone === "ok"
-      ? "bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-emerald-950 dark:border-emerald-600/60 dark:text-emerald-100"
-      : "bg-white border-slate-300 text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100");
+      ? "bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-emerald-950 dark:border-emerald-700 dark:text-emerald-100"
+      : "bg-card border-border text-foreground");
   t.textContent = msg;
   el.toasts.appendChild(t);
   setTimeout(() => { t.style.opacity = "0"; setTimeout(() => t.remove(), 300); }, 2600);
@@ -72,14 +72,14 @@ async function loadStats() {
     el.stats.done.textContent = doneCount;
     el.stats.todo.textContent = todoCount + mockCount;
     el.stats.detail.textContent = `${doneCount} AI-summarized · ${mockCount} mock/heuristic fallback · ${todoCount + mockCount} need real AI`;
-    el.stats.detail.classList.toggle("text-red-500", (todoCount + mockCount) > 0);
-    el.stats.detail.classList.toggle("text-slate-500", (todoCount + mockCount) === 0);
+    el.stats.detail.classList.toggle("text-destructive", (todoCount + mockCount) > 0);
+    el.stats.detail.classList.toggle("text-muted-foreground", (todoCount + mockCount) === 0);
   } catch (err) {
     el.stats.total.textContent = "—";
     el.stats.done.textContent = "—";
     el.stats.todo.textContent = "—";
     el.stats.detail.textContent = `Load failed: ${err.message}`;
-    el.stats.detail.className = "text-[11px] text-red-500";
+    el.stats.detail.className = "text-xs text-destructive";
   }
 }
 

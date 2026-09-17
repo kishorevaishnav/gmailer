@@ -185,21 +185,21 @@ async function deleteDomainEmails(domain) {
 /** ───────────────────────────── Icons ───── */
 const I = {
   chevron: (rotated) =>
-    `<svg class="chevron h-4 w-4 text-slate-400 ${rotated ? "rotate-180" : ""}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>`,
+    `<svg class="chevron h-4 w-4 text-muted-foreground ${rotated ? "rotate-180" : ""}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>`,
   mail: () =>
-    `<svg class="h-4 w-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>`,
+    `<svg class="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>`,
   spark: () =>
     `<svg class="h-3 w-3 text-indigo-500" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0 14.3 9.7 24 12l-9.7 2.3L12 24l-2.3-9.7L0 12l9.7-2.3z"/></svg>`,
   check: () =>
-    `<svg class="h-3.5 w-3.5 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`,
+    `<svg class="h-3.5 w-3.5 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`,
   bullet: () =>
-    `<svg class="h-3.5 w-3.5 text-slate-400" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2.5"/><circle cx="12" cy="12" r="2.5"/><circle cx="19" cy="12" r="2.5"/></svg>`,
+    `<svg class="h-3.5 w-3.5 text-muted-foreground" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2.5"/><circle cx="12" cy="12" r="2.5"/><circle cx="19" cy="12" r="2.5"/></svg>`,
   folder: () =>
-    `<svg class="h-3.5 w-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`,
+    `<svg class="h-3.5 w-3.5 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`,
   alert: () =>
-    `<svg class="h-4 w-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+    `<svg class="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
   spinner: () =>
-    `<svg class="h-4 w-4 animate-spin text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg>`,
+    `<svg class="h-4 w-4 animate-spin text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg>`,
 };
 
 /* ───────────────────────────── Render: category chips ───── */
@@ -210,9 +210,9 @@ function renderCategoryChips() {
     const pressed = active ? "true" : "false";
     return `
       <button type="button" data-cat="${esc(cat)}" aria-pressed="${pressed}"
-        class="cat-chip inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-semibold">
+        class="cat-chip inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm font-semibold">
         ${esc(label)}
-        <span class="text-[10px] opacity-70">${count}</span>
+        <span class="text-xs opacity-70">${count}</span>
       </button>`;
   };
   let html = chip("All", "all", state.selectedCategoryId === "all", allCount);
@@ -239,19 +239,19 @@ function renderDomainList() {
   if (state.loading) {
     if (list) list.innerHTML =
       `<div class="flex flex-col items-center justify-center h-full gap-3 p-8 text-center">
-        ${I.spinner()}
-        <p class="text-sm text-slate-600">Loading inbox…</p>
-      </div>`;
+         ${I.spinner()}
+         <p class="text-sm text-muted-foreground">Loading inbox…</p>
+       </div>`;
     return;
   }
   if (state.error) {
     if (list) list.innerHTML =
       `<div class="flex flex-col items-center justify-center h-full gap-3 p-8 text-center">
-        ${I.alert()}
-        <p class="text-sm font-semibold text-slate-800">Could not load data</p>
-        <p class="text-xs text-slate-500 max-w-xs">${esc(state.error)}</p>
-        <button id="retryBtn" class="mt-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700">Retry</button>
-      </div>`;
+         ${I.alert()}
+         <p class="text-sm font-semibold text-foreground">Could not load data</p>
+         <p class="text-xs text-muted-foreground max-w-xs">${esc(state.error)}</p>
+         <button id="retryBtn" class="mt-1 btn btn-primary text-xs">Retry</button>
+       </div>`;
     const retry = $("#retryBtn");
     if (retry) retry.addEventListener("click", loadData);
     return;
@@ -261,7 +261,7 @@ function renderDomainList() {
   if (count) count.textContent = `${groups.length} domain${groups.length === 1 ? "" : "s"}`;
   if (!groups.length) {
     if (list) list.innerHTML =
-      `<p class="text-sm text-slate-500 p-6 text-center">No emails match this category.</p>`;
+      `<p class="text-sm text-muted-foreground p-6 text-center">No emails match this category.</p>`;
     return;
   }
   let html = "";
@@ -300,19 +300,19 @@ function domainCard(domain, items) {
   if (expanded) {
     const summaryBox = ds
       ? `<div class="domain-summary flex items-start gap-2 px-3 py-2.5 mb-2">
-          ${I.spark()}
-          <div class="min-w-0">
-            <p class="text-[10px] font-bold uppercase tracking-wider text-indigo-600 mb-0.5">AI Domain Summary</p>
-            <p class="text-[12px] text-slate-700 leading-relaxed">${esc(ds.summary)}</p>
-          </div>
-        </div>`
+           ${I.spark()}
+           <div class="min-w-0">
+             <p class="text-xs font-bold uppercase tracking-wider text-indigo-600 mb-0.5">AI Domain Summary</p>
+             <p class="text-sm text-foreground leading-relaxed">${esc(ds.summary)}</p>
+           </div>
+         </div>`
       : "";
     const rows = items.map((e) => emailRow(e)).join("");
     body = `${summaryBox}<div class="space-y-1.5">${rows}</div>`;
   } else {
     body = `<div class="space-y-1.5">
       ${items.slice(0, 2).map((e) => emailRow(e)).join("")}
-      ${count > 2 ? `<p class="text-[11px] text-slate-400 pl-1">+${count - 2} more email${count - 2 === 1 ? "" : "s"}</p>` : ""}
+      ${count > 2 ? `<p class="text-xs text-muted-foreground pl-1">+${count - 2} more email${count - 2 === 1 ? "" : "s"}</p>` : ""}
     </div>`;
   }
 
@@ -324,9 +324,9 @@ function domainCard(domain, items) {
           class="min-w-0 flex-1 flex items-center gap-2 px-3 py-2 text-left">
           ${I.chevron(expanded)}
           ${I.folder()}
-          <span class="min-w-0 flex-1 text-[13px] font-semibold text-slate-800 truncate">${esc(domain)}</span>
-          <span class="ai-badge rounded px-1.5 py-0.5 text-[10px] font-bold">AI</span>
-          <span class="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">${count}</span>
+          <span class="min-w-0 flex-1 text-sm font-semibold text-foreground truncate">${esc(domain)}</span>
+          <span class="ai-badge rounded px-1.5 py-0.5 text-xs font-bold">AI</span>
+          <span class="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs font-bold text-muted-foreground">${count}</span>
         </button>
         <button type="button" data-del-domain="${esc(domain)}" ${busy ? "disabled" : ""}
           class="domain-delete-btn shrink-0"
@@ -346,11 +346,11 @@ function emailRow(e) {
     <div data-email-id="${esc(e.id)}" aria-selected="${active ? "true" : "false"}" class="email-row flex items-center gap-2 px-2.5 py-2">
       ${I.mail()}
       <div class="min-w-0 flex-1">
-        <p class="text-[12px] font-semibold text-slate-800 truncate">${esc(e.subject)}</p>
-        <p class="text-[11px] text-slate-500 truncate">${esc(e.senderName)} · ${fmtTime(e.timestamp)}</p>
+        <p class="text-sm font-semibold text-foreground truncate">${esc(e.subject)}</p>
+        <p class="text-xs text-muted-foreground truncate">${esc(e.senderName)} · ${fmtTime(e.timestamp)}</p>
       </div>
       ${(sum.actionItems || []).length
-        ? `<span class="shrink-0 rounded bg-slate-100 px-1 py-0.5 text-[9px] font-bold text-slate-600">${sum.actionItems.length}</span>` : ""}
+        ? `<span class="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs font-bold text-muted-foreground">${sum.actionItems.length}</span>` : ""}
     </div>`;
 }
 
@@ -365,10 +365,10 @@ async function renderDetail() {
   if (!e) {
     if (detailView) detailView.innerHTML =
       `<div class="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
-        ${I.mail()}
-        <p class="text-sm font-semibold text-slate-700">No email selected</p>
-        <p class="text-xs text-slate-500">Pick an email from a domain group on the left.</p>
-      </div>`;
+         ${I.mail()}
+         <p class="text-sm font-semibold text-foreground">No email selected</p>
+         <p class="text-xs text-muted-foreground">Pick an email from a domain group on the left.</p>
+       </div>`;
     return;
   }
 
@@ -392,48 +392,47 @@ async function renderDetail() {
   const sum = e.aiSummary || {};
   const aiBox = (sum.overview || (sum.keyPoints || []).length || (sum.actionItems || []).length)
     ? `<div class="email-ai-box flex items-start gap-2 px-3 py-2.5 mb-4">
-        ${I.spark()}
-        <div class="min-w-0 flex-1">
-          <p class="text-[10px] font-bold uppercase tracking-wider text-indigo-600 mb-1.5">AI Summary</p>
-          ${sum.overview ? `<p class="text-[12px] text-slate-700 leading-relaxed mb-2">${esc(sum.overview)}</p>` : ""}
-          ${(sum.keyPoints || []).length ? `
-            <div class="mb-2">
-              <p class="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Key points</p>
-              <ul class="space-y-1">
-                ${sum.keyPoints.map((k) => `<li class="flex items-start gap-1.5 text-[11px] text-slate-600">${I.check()}<span class="min-w-0">${esc(k)}</span></li>`).join("")}
-              </ul>
-            </div>` : ""}
-          ${(sum.actionItems || []).length ? `
-            <div>
-              <p class="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Action items</p>
-              <ul class="space-y-1">
-                ${sum.actionItems.map((a) => `<li class="flex items-start gap-1.5 text-[11px] text-slate-700 font-medium">${I.bullet()}<span class="min-w-0">${esc(a)}</span></li>`).join("")}
-              </ul>
-            </div>` : ""}
-        </div>
-      </div>`
+         ${I.spark()}
+         <div class="min-w-0 flex-1">
+           <p class="text-xs font-bold uppercase tracking-wider text-indigo-600 mb-1.5">AI Summary</p>
+           ${sum.overview ? `<p class="text-sm text-foreground leading-relaxed mb-2">${esc(sum.overview)}</p>` : ""}
+           ${(sum.keyPoints || []).length ? `
+             <div class="mb-2">
+               <p class="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1">Key points</p>
+               <ul class="space-y-1">
+                  ${sum.keyPoints.map((k) => `<li class="flex items-start gap-1.5 text-sm text-muted-foreground">${I.check()}<span class="min-w-0">${esc(k)}</span></li>`).join("")}
+               </ul>
+             </div>` : ""}
+           ${(sum.actionItems || []).length ? `
+             <div>
+               <p class="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1">Action items</p>
+               <ul class="space-y-1">
+                 ${sum.actionItems.map((a) => `<li class="flex items-start gap-1.5 text-sm text-foreground font-medium">${I.bullet()}<span class="min-w-0">${esc(a)}</span></li>`).join("")}
+               </ul>
+             </div>` : ""}
+         </div>
+       </div>`
     : "";
 
   if (detailView) detailView.innerHTML = `
     <div class="mx-auto max-w-3xl px-6 py-6">
-      <div class="mb-4 flex items-center gap-2 flex-wrap text-[11px] text-slate-500">
-        <span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">${esc(e.category)}</span>
+      <div class="mb-4 flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
+        <span class="rounded border border-primary/30 bg-primary/5 px-1.5 py-0.5 text-xs font-bold text-primary">${esc(e.category)}</span>
         <span class="font-mono">${esc(e.senderName)}</span>
         <span>·</span>
         <span>${esc(e.senderEmail)}</span>
         <span>·</span>
         <span>${fmtTime(e.timestamp)}</span>
-        <span class="ml-auto rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">${esc(e.domain)}</span>
-      </div>
-      <h2 class="text-xl font-bold text-slate-900 mb-4">${esc(e.subject)}</h2>
+        <span class="ml-auto rounded bg-indigo-50 dark:bg-indigo-950/30 px-1.5 py-0.5 text-xs font-bold text-indigo-700 dark:text-indigo-300">${esc(e.domain)}</span>      </div>
+      <h2 class="text-2xl font-black text-foreground mb-4">${esc(e.subject)}</h2>
       ${e._loading ? `<div class="space-y-2 mb-4"><div class="shimmer h-4 w-full"></div><div class="shimmer h-4 w-5/6"></div></div>` : ""}
-      ${e._loadError ? `<p class="text-xs text-slate-500 mb-4">Failed to load full message: ${esc(e._loadError)}</p>` : ""}
+      ${e._loadError ? `<p class="text-sm text-muted-foreground mb-4">Failed to load full message: ${esc(e._loadError)}</p>` : ""}
       ${aiBox}
-      <div class="rounded-lg border border-slate-200 bg-white px-4 py-3">
-        <p class="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">Body</p>
+      <div class="rounded-lg border border-border bg-muted px-4 py-3">
+        <p class="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Body</p>
         ${e.body
-          ? `<p class="text-[13px] text-slate-700 leading-relaxed whitespace-pre-wrap">${esc(e.body)}</p>`
-          : `<p class="text-[13px] text-slate-400 italic">(no body available — metadata only)</p>`}
+          ? `<p class="text-sm text-foreground leading-relaxed whitespace-pre-wrap">${esc(e.body)}</p>`
+          : `<p class="text-sm text-muted-foreground italic">(no body available — metadata only)</p>`}
       </div>
     </div>`;
 }
