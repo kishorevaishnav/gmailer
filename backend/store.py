@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS messages (
     promo           INTEGER DEFAULT 0,
     body_text       TEXT,
     body_truncated  INTEGER DEFAULT 0,
+    body_html       TEXT,
+    has_html        INTEGER DEFAULT 0,
     summary         TEXT,
     category        TEXT,
     fetched_at      REAL,
@@ -154,6 +156,11 @@ CREATE TABLE IF NOT EXISTS settings (
     value     TEXT NOT NULL,
     updated_at REAL
 );
+
+CREATE TABLE IF NOT EXISTS summary_skipped (
+    sender_email  TEXT PRIMARY KEY,
+    created_at    REAL
+);
 """
 
 _DEFAULT_CATEGORIES = [
@@ -226,6 +233,16 @@ def _get() -> sqlite3.Connection:
         except (sqlite3.OperationalError, sqlite3.ProgrammingError):
             pass
         try:
+            _conn.execute("ALTER TABLE messages ADD COLUMN body_html TEXT")
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError):
+            pass
+        try:
+            # No DEFAULT: pre-migration rows get NULL so callers can tell
+            # "HTML exists but not captured yet" from "genuinely text-only".
+            _conn.execute("ALTER TABLE messages ADD COLUMN has_html INTEGER")
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError):
+            pass
+        try:
             _conn.execute("ALTER TABLE sender_map ADD COLUMN subject_contains TEXT DEFAULT ''")
         except (sqlite3.OperationalError, sqlite3.ProgrammingError):
             pass
@@ -239,6 +256,12 @@ def _get() -> sqlite3.Connection:
                 _conn.execute(_col)
             except (sqlite3.OperationalError, sqlite3.ProgrammingError):
                 pass
+        try:
+            _conn.execute(
+                "CREATE TABLE IF NOT EXISTS summary_skipped (sender_email TEXT PRIMARY KEY, created_at REAL)"
+            )
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError):
+            pass
         _seed_default_categories()
         _seed_sender_map()
         _conn.commit()
@@ -292,8 +315,9 @@ def save_message(msg: dict, summary: dict | None = None) -> None:
                 """INSERT INTO messages
                    (id, sender_name, sender_email, subject, snippet,
                     internal_date_ms, label_ids, promo, body_text,
-                    body_truncated, summary, category, fetched_at, attachments)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    body_truncated, body_html, has_html,
+                    summary, category, fetched_at, attachments)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(id) DO UPDATE SET
                       sender_name=excluded.sender_name,
                       sender_email=excluded.sender_email,
@@ -304,6 +328,8 @@ def save_message(msg: dict, summary: dict | None = None) -> None:
                       promo=excluded.promo,
                       body_text=excluded.body_text,
                       body_truncated=excluded.body_truncated,
+                      body_html=excluded.body_html,
+                      has_html=excluded.has_html,
                       summary=excluded.summary,
                       category=excluded.category,
                       fetched_at=excluded.fetched_at,
@@ -319,6 +345,8 @@ def save_message(msg: dict, summary: dict | None = None) -> None:
                     1 if _is_promo(labels) else 0,
                     msg.get("body_text"),
                     1 if msg.get("body_truncated") else 0,
+                    msg.get("body_html"),
+                    1 if msg.get("has_html") else 0,
                     json.dumps(summary, ensure_ascii=False) if summary else None,
                     category if category else None,
                     time.time(),
@@ -342,6 +370,8 @@ def _message_row_to_dict(row) -> dict:
         "promo": bool(row["promo"]),
         "body_text": row["body_text"] or "",
         "body_truncated": bool(row["body_truncated"]),
+        "body_html": row["body_html"] or "",
+        "has_html": row["has_html"],
         "category": row["category"],
         "attachments": [],
     }
@@ -435,6 +465,22 @@ def remove_messages(message_ids: list[str]) -> int:
         return cur.rowcount
     except Exception as exc:
         logger.warning("store.remove_messages failed: %s", exc)
+        return 0
+
+
+def remove_exact_matches(sender_email: str, subject: str) -> int:
+    if not sender_email or not subject:
+        return 0
+    try:
+        with _lock:
+            cur = _get().execute(
+                "DELETE FROM messages WHERE lower(sender_email) = ? AND lower(subject) = ?",
+                (sender_email.lower(), subject.lower()),
+            )
+            _get().commit()
+        return cur.rowcount
+    except Exception as exc:
+        logger.warning("store.remove_exact_matches failed: %s", exc)
         return 0
 
 
@@ -784,6 +830,63 @@ def clear_skipped() -> int:
     except Exception as exc:
         logger.warning("store.clear_skipped failed: %s", exc)
     return cleared
+
+
+# --- Summary-skip --------------------------------------------------------------
+# Senders whose AI summary the user opted out of. generate_summary() returns
+# None for these so no Ollama call is made; the UI still shows the card and
+# persists the message body. Distinct from "skipped" (which hides from the queue).
+
+def add_summary_skip(email: str) -> None:
+    email = (email or "").strip().lower()
+    if not email:
+        return
+    try:
+        with _lock:
+            _get().execute(
+                "INSERT OR REPLACE INTO summary_skipped (sender_email, created_at) VALUES (?, ?)",
+                (email, time.time()),
+            )
+            _get().commit()
+    except Exception as exc:
+        logger.warning("store.add_summary_skip failed: %s", exc)
+
+
+def remove_summary_skip(email: str) -> None:
+    email = (email or "").strip().lower()
+    try:
+        with _lock:
+            _get().execute("DELETE FROM summary_skipped WHERE sender_email = ?", (email,))
+            _get().commit()
+    except Exception as exc:
+        logger.warning("store.remove_summary_skip failed: %s", exc)
+
+
+def is_summary_skipped(email: str) -> bool:
+    email = (email or "").strip().lower()
+    if not email:
+        return False
+    try:
+        with _lock:
+            row = _get().execute(
+                "SELECT 1 FROM summary_skipped WHERE sender_email = ?", (email,)
+            ).fetchone()
+        return bool(row)
+    except Exception as exc:
+        logger.warning("store.is_summary_skipped failed: %s", exc)
+        return False
+
+
+def get_summary_skips() -> list[str]:
+    try:
+        with _lock:
+            rows = _get().execute(
+                "SELECT sender_email FROM summary_skipped ORDER BY created_at DESC"
+            ).fetchall()
+        return [str(r["sender_email"]) for r in rows]
+    except Exception as exc:
+        logger.warning("store.get_summary_skips failed: %s", exc)
+        return []
 
 
 # --- TODO list ---------------------------------------------------------------

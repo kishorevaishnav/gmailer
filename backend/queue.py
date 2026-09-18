@@ -19,25 +19,19 @@ def _bundle_key(item: dict) -> str:
     return name or "unknown"
 
 
-def build_queue(client, max_results: int = config.DEFAULT_BATCH, page_token: str | None = None):
-    """Return (items, bundles_summary, next_page_token).
+def bundle_items(metas: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Group flat metadata into (items, bundles_summary) with the queue shape.
 
-    Ordering strategy:
-      - Multi-message senders (bundles) first, biggest bundle first —
-        so the user can wipe whole mailing lists in one click.
-      - Singles after, newest first.
+    Shared by the fresh Gmail queue and the DB-only cached-first queue so both
+    produce byte-identical item shapes.
     """
-    message_ids, next_page_token = list_unread_page(client, max_results, page_token)
-    metas = get_metadata_batch(client, message_ids)
     if not metas:
-        return [], [], next_page_token
+        return [], []
 
-    # Group by sender.
     groups: dict[str, list[dict]] = defaultdict(list)
     for m in metas:
         groups[_bundle_key(m)].append(m)
 
-    # Assign bundle metadata.
     items: list[dict] = []
     bundles_summary: list[dict] = []
     for key, members in groups.items():
@@ -55,7 +49,6 @@ def build_queue(client, max_results: int = config.DEFAULT_BATCH, page_token: str
             m["in_bundle"] = count > 1
             items.append(m)
 
-    # Multi-sender bundles first (desc by count, then newest), singles after.
     items.sort(
         key=lambda i: (
             0 if i["bundle_count"] > 1 else 1,
@@ -64,4 +57,20 @@ def build_queue(client, max_results: int = config.DEFAULT_BATCH, page_token: str
         )
     )
     bundles_summary.sort(key=lambda b: b["count"], reverse=True)
+    return items, bundles_summary
+
+
+def build_queue(client, max_results: int = config.DEFAULT_BATCH, page_token: str | None = None):
+    """Return (items, bundles_summary, next_page_token).
+
+    Ordering strategy:
+      - Multi-message senders (bundles) first, biggest bundle first —
+        so the user can wipe whole mailing lists in one click.
+      - Singles after, newest first.
+    """
+    message_ids, next_page_token = list_unread_page(client, max_results, page_token)
+    metas = get_metadata_batch(client, message_ids)
+    if not metas:
+        return [], [], next_page_token
+    items, bundles_summary = bundle_items(metas)
     return items, bundles_summary, next_page_token
