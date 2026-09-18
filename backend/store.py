@@ -449,6 +449,22 @@ def remove_messages(message_ids: list[str]) -> int:
         return 0
 
 
+def remove_exact_matches(sender_email: str, subject: str) -> int:
+    if not sender_email or not subject:
+        return 0
+    try:
+        with _lock:
+            cur = _get().execute(
+                "DELETE FROM messages WHERE lower(sender_email) = ? AND lower(subject) = ?",
+                (sender_email.lower(), subject.lower()),
+            )
+            _get().commit()
+        return cur.rowcount
+    except Exception as exc:
+        logger.warning("store.remove_exact_matches failed: %s", exc)
+        return 0
+
+
 def save_attachments(message_id: str, attachments: list[dict]) -> None:
     try:
         with _lock:

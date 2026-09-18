@@ -16,7 +16,7 @@ from backend import gtasks
 from backend import queue as queue_module
 from backend import summarizer
 from backend import wiki as wiki_module
-from backend.rules import RuleParseError, parse_skill_md
+from backend.rules import RuleParseError, parse_skill_md, rule_md_for_exact_subject
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("gmailer")
@@ -150,6 +150,21 @@ def api_settings_prompts_update(req: PromptsPatchRequest):
     return {"ok": True}
 
 
+class HighlightRequest(BaseModel):
+    categories: str
+
+
+@app.get("/api/settings/highlight")
+def api_settings_highlight():
+    return {"categories": store.get_setting("highlight_categories", "Finance/Bill")}
+
+
+@app.put("/api/settings/highlight")
+def api_settings_highlight_update(req: HighlightRequest):
+    store.set_setting("highlight_categories", req.categories or "Finance/Bill")
+    return {"ok": True}
+
+
 # --- Queue -------------------------------------------------------------------
 
 @app.get("/api/queue")
@@ -175,7 +190,8 @@ def api_queue(max_results: int = config.DEFAULT_BATCH, page_token: str | None = 
             if cached.get("category_locked"):
                 item["category_locked"] = True
         sender = (item.get("sender_email") or "").strip().lower()
-        item["needs_summary"] = not (item.get("summary") and item["summary"].get("one_liner")) and sender not in skips
+        item["needs_summary"] = not ai_summary.summary_is_real(item.get("summary")) and sender not in skips
+    summarizer.nudge()
     return {
         "total": len(items),
         "items": items,
@@ -186,6 +202,40 @@ def api_queue(max_results: int = config.DEFAULT_BATCH, page_token: str | None = 
         "auto_trashed": auto_trashed,
         "auto_starred": auto_starred,
         "auto_skipped": auto_skipped,
+        "highlight": store.get_setting("highlight_categories", "Finance/Bill"),
+    }
+
+
+@app.get("/api/queue/cached")
+def api_queue_cached(max_results: int = config.DEFAULT_BATCH):
+    """DB-only queue, same shape as /api/queue but never touches Gmail or rules.
+
+    Lets the frontend paint the last-known inbox instantly while a fresh
+    /api/queue refresh (Gmail metadata batching) runs in the background.
+    Flagged stale so the client treats it as a first-paint cache only.
+    """
+    max_results = max(1, min(max_results, config.MAX_BATCH))
+    metas = store.list_messages(limit=max_results)
+    items, bundles = queue_module.bundle_items(metas)
+    skips = set(store.get_summary_skips())
+    for item in items:
+        sender = (item.get("sender_email") or "").strip().lower()
+        item["needs_summary"] = (
+            not ai_summary.summary_is_real(item.get("summary")) and sender not in skips
+        )
+        item["body_cached"] = bool(item.get("body_text"))
+    return {
+        "total": len(items),
+        "items": items,
+        "bundles": bundles,
+        "queried_count": max_results,
+        "cache_count": store.cache_count(),
+        "next_page_token": None,
+        "auto_trashed": 0,
+        "auto_starred": 0,
+        "auto_skipped": 0,
+        "highlight": store.get_setting("highlight_categories", "Finance/Bill"),
+        "stale": True,
     }
 
 
@@ -203,9 +253,8 @@ def api_message(message_id: str):
         cached["from_cache"] = True
         return cached
     if cached and cached.get("body_text"):
-        # Body already local; only the AI summary is stale/absent.
-        cached["summary"] = ai_summary.generate_summary(cached)
-        store.save_message(cached)
+        summarizer.mark_urgent(message_id)
+        summarizer.nudge()
         safe_review(None)
         cached["from_cache"] = True
         return cached
@@ -216,11 +265,22 @@ def api_message(message_id: str):
         msg["summary"] = cached["summary"]
         if cached.get("category") and not msg.get("category"):
             msg["category"] = cached["category"]
-    else:
-        msg["summary"] = ai_summary.generate_summary(msg)
     store.save_message(msg)
+    summarizer.mark_urgent(message_id)
+    summarizer.nudge()
     safe_review(service)
     return msg
+
+
+@app.get("/api/summaries")
+def api_summaries(ids: str = ""):
+    mids = [i for i in (ids or "").split(",") if i][:200]
+    out: dict = {}
+    for mid in mids:
+        m = store.load_message(mid)
+        if m and ai_summary.summary_is_real(m.get("summary")):
+            out[mid] = m["summary"]
+    return {"summaries": out}
 
 
 @app.post("/api/messages/{message_id}/summarize")
@@ -979,6 +1039,34 @@ def api_star(message_id: str):
     _run(gmail_service.star, service, message_id)
     _record_trace(service, message_id, "starred")
     return {"ok": True, "undo": _undo_payload("star", message_id)}
+
+
+class ExactSubjectDeleteRequest(BaseModel):
+    message_id: str
+    sender_email: str
+    sender_name: str = ""
+    subject: str
+
+
+@app.post("/api/exact-subject-delete")
+def api_exact_subject_delete(req: ExactSubjectDeleteRequest):
+    sender_email = (req.sender_email or "").strip()
+    subject = (req.subject or "").strip()
+    message_id = (req.message_id or "").strip()
+    if not sender_email or not subject or not message_id:
+        raise HTTPException(status_code=400, detail="message_id, sender_email and subject are required")
+
+    md = rule_md_for_exact_subject(sender_email, req.sender_name or "", subject)
+    parsed = parse_skill_md(md)
+    rule_id = None
+    if not store.identical_rule_exists(json.dumps(parsed, sort_keys=True)):
+        rule_id = store.add_rule(md, json.dumps(parsed, sort_keys=True))
+
+    service = require_service()
+    _run(gmail_service.trash, service, message_id)
+    _record_trace(service, message_id, "trashed", rule_id=rule_id)
+    purged = store.remove_exact_matches(sender_email.lower(), subject.lower())
+    return {"ok": True, "rule_id": rule_id, "trashed": message_id, "purged": purged}
 
 
 # --- Bundle (bulk) actions ----------------------------------------------------

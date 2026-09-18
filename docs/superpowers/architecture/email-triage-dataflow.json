@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Gmailer Email Triage — Data Flow",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [1240, 760],
+    "output": "docs/superpowers/architecture/email-triage-dataflow.html",
+    "views": [
+      {
+        "id": "batch-pipeline",
+        "label": "Batch queue pipeline",
+        "focus": ["gmail", "build_queue", "apply_rules", "cache", "browser"],
+        "note": "Unread Gmail messages are fetched, bundled by sender, auto-triaged by rules, hydrated from local cache, then rendered as cards."
+      },
+      {
+        "id": "on-demand-summary",
+        "label": "On-demand AI summary",
+        "focus": ["browser", "summarize", "ollama", "cache"],
+        "note": "A card lacking a summary triggers GET /api/messages/{id}: cache miss calls Ollama, then persists the summary."
+      },
+      {
+        "id": "rules-traits",
+        "label": "Rules auto-actions + traces",
+        "focus": ["build_queue", "apply_rules", "traces"],
+        "note": "Rules fire trash/star/skip on first match and write trace rows so proposals stay anchored to acted-on mail."
+      }
+    ]
+  },
+  "stages": [
+    { "label": "Source" },
+    { "label": "Queue build" },
+    { "label": "Triage" },
+    { "label": "Enrichment" },
+    { "label": "Consumption" }
+  ],
+  "nodes": [
+    { "id": "gmail", "type": "cloud", "label": "Gmail API", "sublabel": "unread INBOX", "stage": 0, "row": 2, "tag": "source of truth" },
+    { "id": "build_queue", "type": "backend", "label": "build_queue", "sublabel": "list + metadata, 8 workers", "stage": 1, "row": 2, "tag": "queue.py" },
+    { "id": "apply_rules", "type": "backend", "label": "_apply_rules", "sublabel": "first match wins", "stage": 2, "row": 2, "tag": "rules.py" },
+    { "id": "cache", "type": "database", "label": "SQLite cache", "sublabel": "summary + body_text", "stage": 3, "row": 2, "tag": "survives reload" },
+    { "id": "browser", "type": "frontend", "label": "Browser", "sublabel": "index.html + app.js", "stage": 4, "row": 2, "tag": "triage UI" },
+    { "id": "traces", "type": "database", "label": "traces table", "sublabel": "auto_trash/star/skip", "stage": 2, "row": 4, "yOffset": 0, "tag": "30-day window" },
+    { "id": "summarize", "type": "backend", "label": "generate_summary", "sublabel": "api_message / ai_summary.py", "stage": 3, "row": 4, "yOffset": 0, "tag": "Ollama + mock" },
+    { "id": "ollama", "type": "external", "label": "Ollama LLM", "sublabel": "localhost:11434", "stage": 3, "row": 4, "yOffset": 70, "tag": "gemma3:4b" }
+  ],
+  "flows": [
+    { "from": "gmail", "to": "build_queue", "label": "unread IDs + metadata", "route": "straight", "labelAt": [208, 432] },
+    { "from": "build_queue", "to": "apply_rules", "label": "bundled queue items", "route": "straight", "labelAt": [422, 432] },
+    { "from": "apply_rules", "to": "cache", "label": "kept items hydrated (load_message)", "route": "straight", "labelAt": [638, 432] },
+    { "from": "cache", "to": "browser", "label": "GET /api/queue", "route": "straight", "labelAt": [852, 432] },
+    { "from": "apply_rules", "to": "traces", "label": "auto_{trash|star|skip}" },
+    { "from": "browser", "to": "summarize", "label": "card w/o summary -> GET /api/messages/{id}" },
+    { "from": "summarize", "to": "cache", "label": "save summary + body" },
+    { "from": "summarize", "to": "ollama", "label": "POST /api/chat (miss)" }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "Proposed: background summarization",
+      "items": [
+        "Startup thread summarizes store.get_queue_items() sequentially",
+        "Bounded by QUEUE_SUMMARIZE_BATCH=50 per cycle",
+        "Checks DB summary field before Ollama — never redo"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Skip AI per sender",
+      "items": [
+        "summary_skipped table (sender_email PK)",
+        "generate_summary() short-circuits",
+        "Sender still categorized — only AI text skipped"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Exact-subject delete (proposed)",
+      "items": [
+        "match_exact_subject: [subjects]",
+        "Trashed in Gmail, NOT cached locally",
+        "Applied before the rule pipeline"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Finance/Bill priority (proposed)",
+      "items": [
+        "Finance/Bill sorts to top of category chips + bundles",
+        "Background worker processes priority messages first",
+        "CATEGORY_PRIORITY list drives sort order"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Caching guarantees",
+      "items": [
+        "SQLite persists across reloads (single-user _lock)",
+        "Ollama 30s timeout falls back to deterministic mock",
+        "Regenerate / cache-clear invalidate _CACHE + DB"
+      ]
+    }
+  ]
+}

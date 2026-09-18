@@ -17,7 +17,24 @@ _PACE_SECONDS = 1.0
 _CATEGORY_PRIORITY = {"finance/bill", "banks", "services"}
 
 _stop = threading.Event()
+_wake = threading.Event()
 _thread: threading.Thread | None = None
+
+_URGENT_MAX = 200
+_urgent: set[str] = set()
+
+
+def mark_urgent(message_id: str) -> None:
+    if not message_id:
+        return
+    _urgent.add(message_id)
+    if len(_urgent) > _URGENT_MAX:
+        for mid in list(_urgent)[: len(_urgent) - _URGENT_MAX]:
+            _urgent.discard(mid)
+
+
+def nudge() -> None:
+    _wake.set()
 
 
 def _load_priority_senders() -> list[dict]:
@@ -25,6 +42,16 @@ def _load_priority_senders() -> list[dict]:
         return store.get_sender_map()
     except Exception:
         return []
+
+
+def _load_highlight_categories() -> set[str]:
+    raw = ""
+    try:
+        raw = store.get_setting("highlight_categories", "Finance/Bill")
+    except Exception:
+        pass
+    extra = {c.strip().lower() for c in (raw or "").split(",") if c.strip()}
+    return _CATEGORY_PRIORITY | extra
 
 
 def _sender_matches(msg: dict, pattern: str) -> bool:
@@ -36,17 +63,17 @@ def _sender_matches(msg: dict, pattern: str) -> bool:
     return pat in (msg.get("sender_email") or "").strip().lower()
 
 
-def _is_priority(msg: dict, mappings: list[dict]) -> bool:
+def _is_priority(msg: dict, mappings: list[dict], highlight: set[str]) -> bool:
     cat = (msg.get("category") or "").strip().lower()
-    if cat in _CATEGORY_PRIORITY:
+    if cat in highlight:
         return True
     sum_cat = ((msg.get("summary") or {}).get("category") or "").strip().lower()
-    if sum_cat in _CATEGORY_PRIORITY:
+    if sum_cat in highlight:
         return True
     email = (msg.get("sender_email") or "").strip().lower()
     if email:
         for m in mappings:
-            if (m.get("category") or "").strip().lower() in _CATEGORY_PRIORITY and _sender_matches(msg, m.get("pattern", "")):
+            if (m.get("category") or "").strip().lower() in highlight and _sender_matches(msg, m.get("pattern", "")):
                 return True
     return False
 
@@ -68,9 +95,11 @@ def summarize_needy(limit: int | None = None) -> int:
         return 0
 
     mappings = _load_priority_senders()
+    highlight = _load_highlight_categories()
     want: list[dict] = []
     for m in store.list_messages(limit=config.MAX_BATCH):
-        if m.get("summary"):
+        if ai_summary.summary_is_real(m.get("summary")):
+            _urgent.discard(m.get("id") or "")
             continue
         if not m.get("body_text"):
             continue
@@ -80,7 +109,8 @@ def summarize_needy(limit: int | None = None) -> int:
         want.append(m)
 
     want.sort(key=lambda m: (
-        0 if _is_priority(m, mappings) else 1,
+        0 if (m.get("id") or "") in _urgent else 1,
+        0 if _is_priority(m, mappings, highlight) else 1,
         -(m.get("internal_date_ms") or 0),
     ))
 
@@ -91,6 +121,7 @@ def summarize_needy(limit: int | None = None) -> int:
         summary = ai_summary.generate_summary(m)
         if summary:
             done += 1
+            _urgent.discard(m.get("id") or "")
         time.sleep(_PACE_SECONDS)
     if done:
         logger.info("background summarizer produced %d summary/s", done)
@@ -103,7 +134,8 @@ def _loop() -> None:
             summarize_needy()
         except Exception:
             logger.exception("background summarizer cycle failed")
-        _stop.wait(_INTERVAL_SECONDS)
+        _wake.wait(_INTERVAL_SECONDS)
+        _wake.clear()
 
 
 def start() -> None:
@@ -124,3 +156,4 @@ def start() -> None:
 
 def stop() -> None:
     _stop.set()
+    _wake.set()

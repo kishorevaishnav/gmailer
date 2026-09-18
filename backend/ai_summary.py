@@ -634,6 +634,11 @@ def _mock_category_summary(category: str, messages: list[dict]) -> str:
     )
 
 
+def summary_is_real(summary) -> bool:
+    """True only for a genuine AI one-liner, never a mock/fallback summary."""
+    return isinstance(summary, dict) and not summary.get("mock") and bool(summary.get("one_liner"))
+
+
 def clear_in_memory_caches() -> None:
     """Drop per-message + group summary caches (used on 'Clear cache')."""
     with _CACHE_LOCK:

@@ -14,10 +14,13 @@ from __future__ import annotations
 import base64
 import email.utils
 import html
+import json
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from time import sleep
+from urllib.parse import quote
+from uuid import uuid4
 
 import requests
 from google.auth.transport.requests import Request as GoogleAuthRequest
@@ -27,6 +30,10 @@ from urllib3.util.retry import Retry
 from . import auth, config
 
 _API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
+
+_BATCH_URL = "https://gmail.googleapis.com/batch/gmail/v1/"
+
+_BATCH_CHUNK = 100
 
 _PROFILE_EMAIL: str | None = None
 _PROFILE_LOCK = threading.Lock()
@@ -121,6 +128,85 @@ class GmailClient:
         for h in ("From", "Subject", "Date"):
             params.append(("metadataHeaders", h))
         return self._request("GET", f"/messages/{message_id}", params=params)
+
+    def batch_get_metadata(self, message_ids: list[str]) -> dict[str, dict]:
+        """Fetch metadata for many ids via the Gmail multipart batch endpoint.
+
+        Up to 100 sub-requests ride one HTTP POST, so 200 queued ids cost ~2
+        round-trips instead of 200. Returns {message_id: parsed_metadata}.
+        Sub-requests throttled by Gmail's per-user quota get one retry pass;
+        ids that keep failing are omitted (dead/stale messages keep the queue
+        moving).
+        """
+        _RETRY_STATUSES = (408, 429, 500, 502, 503, 504)
+
+        def build_body(chunk_ids: list[str], boundary: str) -> str:
+            params = "?format=metadata"
+            for h in ("From", "Subject", "Date"):
+                params += f"&metadataHeaders={quote(h)}"
+            parts = []
+            for mid in chunk_ids:
+                parts.append(
+                    f"--{boundary}\r\n"
+                    "Content-Type: application/http\r\n"
+                    "Content-Transfer-Encoding: binary\r\n"
+                    "\r\n"
+                    f"GET /gmail/v1/users/me/messages/{mid}{params}\r\n"
+                    "\r\n"
+                )
+            return "".join(parts) + f"--{boundary}--\r\n"
+
+        def post_batch(token: str, boundary: str, body: str) -> requests.Response:
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": f"multipart/mixed; boundary={boundary}",
+            }
+            return self._session.post(
+                _BATCH_URL, data=body, headers=headers, timeout=_READ_TIMEOUT
+            )
+
+        results: dict[str, dict] = {}
+        pending = [mid for mid in message_ids if mid]
+        for attempt in range(2):
+            if not pending:
+                break
+            retry: list[str] = []
+            for chunk in _chunks(pending, _BATCH_CHUNK):
+                boundary = "gmailer_" + uuid4().hex
+                body = build_body(chunk, boundary)
+                resp = post_batch(self._token(), boundary, body)
+                if resp.status_code in (429, 503) or (
+                    resp.status_code == 403 and "quota" in (resp.text or "").lower()
+                ):
+                    sleep(30.0 if resp.status_code == 403 else 2.0)
+                    resp = post_batch(self._token(), boundary, body)
+                if resp.status_code == 401:
+                    self._creds.refresh(GoogleAuthRequest())
+                    resp = post_batch(self._token(), boundary, body)
+                if resp.status_code >= 400:
+                    continue
+                items = _parse_batch_response(
+                    resp.content, resp.headers.get("Content-Type")
+                )
+                if len(items) != len(chunk):
+                    retry.extend(chunk)
+                    continue
+                for idx, (status, raw) in enumerate(items):
+                    mid = chunk[idx]
+                    if raw is not None:
+                        results[mid] = _parse_metadata(
+                            raw,
+                            mid,
+                            raw.get("threadId", ""),
+                            raw.get("snippet", ""),
+                            raw.get("labelIds", []),
+                        )
+                    elif status in _RETRY_STATUSES:
+                        retry.append(mid)
+            pending = retry
+            if pending and attempt == 0:
+                sleep(2.0)
+        return results
 
     def get_full(self, message_id: str) -> dict:
         return self._request("GET", f"/messages/{message_id}", params=[("format", "full")])
@@ -251,19 +337,55 @@ def get_metadata(client: GmailClient, message_id: str) -> dict:
     )
 
 
-def get_metadata_batch(client: GmailClient, message_ids: list[str]) -> list[dict]:
-    """Fetch metadata for a batch concurrently. Skips failures silently."""
-    results: list[dict] = []
-    with ThreadPoolExecutor(max_workers=config.METADATA_WORKERS) as pool:
-        futures = {
-            pool.submit(get_metadata, client, mid): mid for mid in message_ids
-        }
-        for fut in futures:
+def _chunks(seq: list[str], size: int) -> list[list[str]]:
+    return [seq[i : i + size] for i in range(0, len(seq), size)]
+
+
+def _parse_batch_response(content: bytes, content_type: str | None) -> list[tuple[int, dict | None]]:
+    """Split a multipart/mixed batch response into (status, json) pairs.
+
+    The Gmail batch response body carries no top-level MIME headers, only its
+    own boundary (announced in the Content-Type), so split on that boundary
+    manually. Parts keep request order; each embeds an `HTTP/1.1 <code>`
+    status line, and 2xx parts carry the message resource to parse. Non-JSON
+    parts yield (status, None) so callers can spot throttled/errored ids.
+    """
+    m = re.search(r'boundary="?([^";]+)"?', content_type or "")
+    if not m:
+        return []
+    delimiter = b"--" + m.group(1).encode("ascii", "ignore")
+    out: list[tuple[int, dict | None]] = []
+    for blob in content.split(delimiter):
+        blob = blob.strip(b"\r\n")
+        if not blob or blob == b"--":
+            continue
+        _, _, sub = blob.partition(b"\r\n\r\n")
+        head, _, payload = sub.strip(b"\r\n").partition(b"\r\n\r\n")
+        status_line = head.split(b"\r\n", 1)[0]
+        try:
+            status = int(status_line.split(b" ", 2)[1] or 0)
+        except (IndexError, ValueError):
+            status = 0
+        parsed = None
+        if 200 <= status < 300:
             try:
-                results.append(fut.result())
-            except Exception:
-                pass  # skip dead/stale messages; keep the queue moving
-    return results
+                candidate = json.loads(payload.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                candidate = None
+            if isinstance(candidate, dict):
+                parsed = candidate
+        out.append((status, parsed))
+    return out
+
+
+def get_metadata_batch(client: GmailClient, message_ids: list[str]) -> list[dict]:
+    """Fetch metadata for a batch via the Gmail multipart batch endpoint.
+
+    One HTTP POST covers up to 100 ids (vs 200 threads before). Skips
+    failures silently and preserves the caller's id ordering.
+    """
+    by_id = client.batch_get_metadata(message_ids)
+    return [by_id[mid] for mid in message_ids if mid in by_id]
 
 
 def _decode_body(part: dict) -> str:

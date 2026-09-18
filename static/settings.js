@@ -16,6 +16,10 @@ const el = {
   promptsContainer: $("promptsContainer"),
   toasts: $("toasts"),
   refreshBtn: $("refreshBtn"),
+  highlightInput: $("highlightInput"),
+  highlightSaveBtn: $("highlightSaveBtn"),
+  highlightResetBtn: $("highlightResetBtn"),
+  skippedSendersList: $("skippedSendersList"),
 };
 
 let originals = {};
@@ -150,7 +154,75 @@ async function resetAll() {
 
 el.saveBtn.addEventListener("click", savePrompts);
 el.resetAllBtn.addEventListener("click", resetAll);
-el.refreshBtn.addEventListener("click", () => { loadPrompts(); loadStats(); });
+el.refreshBtn.addEventListener("click", () => { loadPrompts(); loadStats(); loadHighlight(); loadSkippedSenders(); });
+
+async function loadHighlight() {
+  try {
+    const data = await api("/api/settings/highlight");
+    el.highlightInput.value = data.categories || "Finance/Bill";
+  } catch (err) {
+    toast(`Failed to load highlight categories: ${err.message}`, "err");
+  }
+}
+
+async function saveHighlight() {
+  const value = (el.highlightInput.value || "").trim() || "Finance/Bill";
+  try {
+    await api("/api/settings/highlight", { method: "PUT", body: JSON.stringify({ categories: value }) });
+    toast("Highlight categories saved", "ok");
+  } catch (err) {
+    toast(`Save failed: ${err.message}`, "err");
+  }
+}
+
+async function resetHighlight() {
+  el.highlightInput.value = "Finance/Bill";
+  await saveHighlight();
+}
+
+async function loadSkippedSenders() {
+  if (!el.skippedSendersList) return;
+  try {
+    const data = await api("/api/summary-skipped");
+    const items = data.items || [];
+    if (!items.length) {
+      el.skippedSendersList.innerHTML = `<p class="text-xs text-muted-foreground">No senders are skipped from AI summaries.</p>`;
+      return;
+    }
+    el.skippedSendersList.innerHTML = items.map((s) => {
+      const email = typeof s === "string" ? s : (s && s.sender_email);
+      return `<div class="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
+        <span class="min-w-0 flex-1 truncate text-sm text-foreground font-mono">${esc(email || "?")}</span>
+        <button data-unskip="${escAttr(email || "")}" class="btn btn-outline text-xs shrink-0">Resume summaries</button>
+      </div>`;
+    }).join("");
+  } catch (err) {
+    toast(`Failed to load skipped senders: ${err.message}`, "err");
+  }
+}
+
+el.highlightSaveBtn.addEventListener("click", saveHighlight);
+el.highlightResetBtn.addEventListener("click", resetHighlight);
+
+if (el.skippedSendersList) {
+  el.skippedSendersList.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-unskip]");
+    if (!btn) return;
+    const email = btn.dataset.unskip;
+    try {
+      await api(`/api/summary-skipped/${encodeURIComponent(email)}`, { method: "DELETE" });
+      toast(`Resumed summaries for ${email}`, "ok");
+      loadSkippedSenders();
+    } catch (err) {
+      toast(`Remove failed: ${err.message}`, "err");
+    }
+  });
+}
+
+loadPrompts();
+loadStats();
+loadHighlight();
+loadSkippedSenders();
 
 el.promptsContainer.addEventListener("click", (e) => {
   const btn = e.target.closest(".resetBtn");
@@ -165,6 +237,3 @@ el.promptsContainer.addEventListener("keydown", (e) => {
     savePrompts();
   }
 });
-
-loadPrompts();
-loadStats();

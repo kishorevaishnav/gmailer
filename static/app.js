@@ -46,7 +46,7 @@ const state = {
   editorRuleId: null,      // rule being edited (null = new rule)
   editorMarkdown: "",      // current editor content
   editorApplyNow: false,
-  pendingSummCount: 0,     // emails currently being summarized in the background
+  highlightCategories: [], // categories pinned to the top + visually accented (default Finance/Bill)
 };
 
 /* ───────────────────────────── Elements ────────────────────────── */
@@ -69,7 +69,6 @@ const el = {
   themeBtn: $("themeBtn"), themeIconMoon: $("themeIconMoon"), themeIconSun: $("themeIconSun"),
   position: $("position"), positionTotal: $("positionTotal"),
   undoTopBtn: $("undoTopBtn"), reloadBtn: $("reloadBtn"), clearCacheBtn: $("clearCacheBtn"), todoCount: $("todoCount"),   searchInput: $("searchInput"),
-  summProgress: $("summProgress"),
   todoModal: $("todoModal"), todoModalSub: $("todoModalSub"), todoDueInput: $("todoDueInput"), todoModalCancel: $("todoModalCancel"), todoModalSave: $("todoModalSave"),
   recatModal: $("recatModal"), recatModalSub: $("recatModalSub"), recatSelect: $("recatSelect"), recatReason: $("recatReason"), recatModalCancel: $("recatModalCancel"), recatModalAuto: $("recatModalAuto"), recatModalSave: $("recatModalSave"),
   toasts: $("toasts"),
@@ -261,6 +260,57 @@ async function loadQueue() {
   state.searchQuery = "";
   state.searchResults = null;
   if (el.searchInput) el.searchInput.value = "";
+  const cached = await paintCachedQueue();
+  if (cached && cached.total > 0) {
+    await refreshQueueSilently();
+  } else {
+    await loadQueueFresh();
+  }
+}
+
+async function paintCachedQueue() {
+  try {
+    const [data, skippedRes, rulesRes, proposalsRes, wikiRes, todosRes, summarySkipRes] = await Promise.all([
+      api(`/api/queue/cached`),
+      api("/api/skipped").catch(() => ({ items: [] })),
+      api("/api/rules").catch(() => ({ items: [] })),
+      api("/api/proposals").catch(() => ({ items: [] })),
+      api("/api/wiki/observations").catch(() => ({ items: [] })),
+      api("/api/todos").catch(() => ({ items: [] })),
+      api("/api/summary-skipped").catch(() => ({ skipped: [] })),
+    ]);
+    applyQueueData(data, skippedRes, rulesRes, proposalsRes, wikiRes, todosRes, summarySkipRes);
+    showMain();
+    if (state.queue.length === 0) { showEmpty(); return data; }
+    await renderAll(true);
+    return data;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function refreshQueueSilently() {
+  try {
+    const data = await api(`/api/queue?max_results=${BATCH}`);
+    const prevIds = new Set(state.queue.map((i) => i.id));
+    const fresh = (data.items || []).filter((it) => !state.skippedIds.has(it.id));
+    const added = fresh.filter((it) => !prevIds.has(it.id)).length;
+    state.queue = fresh;
+    state.originalTotal = state.queue.length;
+    state.cacheCount = data.cache_count || 0;
+    state.nextPageToken = data.next_page_token || null;
+    state.highlightCategories = String(data.highlight || "Finance/Bill").split(",").map((s) => s.trim()).filter(Boolean);
+    const counts = [];
+    if (data.auto_trashed) counts.push(`${data.auto_trashed} trashed by rules`);
+    if (data.auto_starred) counts.push(`${data.auto_starred} starred`);
+    if (data.auto_skipped) counts.push(`${data.auto_skipped} skipped`);
+    if (added) counts.push(`${added} new`);
+    const note = counts.length ? ` · ${counts.join(", ")}` : "";
+    toast(`↻ Inbox refreshed — ${state.queue.length} unread${note} · hit Reload (↻) to view`, "info", { duration: 4000 });
+  } catch (e) {}
+}
+
+async function loadQueueFresh() {
   await showLoading("Pulling latest unread inbox…");
   try {
     const [data, skippedRes, rulesRes, proposalsRes, wikiRes, todosRes, summarySkipRes] = await Promise.all([
@@ -272,28 +322,7 @@ async function loadQueue() {
       api("/api/todos").catch(() => ({ items: [] })),
       api("/api/summary-skipped").catch(() => ({ skipped: [] })),
     ]);
-    const skipped = skippedRes.items || [];
-    state.skippedIds = new Set(skipped.map((i) => i.id));
-    state.skippedItems = skipped;
-    state.todoIds = new Set((todosRes.items || []).map((i) => i.id));
-    state.skippedSummarySenders = new Set(
-      (summarySkipRes.items || []).map((s) => typeof s === "string" ? s : (s && s.sender_email))
-    );
-    const keep = [];
-    (data.items || []).forEach((it) => {
-      if (state.skippedIds.has(it.id)) state.skippedItems.push(it);
-      else keep.push(it);
-    });
-    state.queue = keep;
-    state.originalTotal = state.queue.length;
-    state.index = 0;
-    state.detail.clear();
-    state.fetching.clear();
-    state.cacheCount = data.cache_count || 0;
-    state.nextPageToken = data.next_page_token || null;
-    state.rules = rulesRes.items || [];
-    state.proposals = proposalsRes.items || [];
-    state.wikiObservations = wikiRes.items || [];
+    applyQueueData(data, skippedRes, rulesRes, proposalsRes, wikiRes, todosRes, summarySkipRes);
     showMain();
     if (state.queue.length === 0) { showEmpty(); return; }
     await renderAll(true);
@@ -306,8 +335,34 @@ async function loadQueue() {
     }
   } catch (e) {
     el.loadingText.textContent = `Failed to load queue: ${e.message}`;
-    setTimeout(loadQueue, 2500);
+    setTimeout(loadQueueFresh, 2500);
   }
+}
+
+function applyQueueData(data, skippedRes, rulesRes, proposalsRes, wikiRes, todosRes, summarySkipRes) {
+  const skipped = skippedRes.items || [];
+  state.skippedIds = new Set(skipped.map((i) => i.id));
+  state.skippedItems = skipped;
+  state.todoIds = new Set((todosRes.items || []).map((i) => i.id));
+  state.skippedSummarySenders = new Set(
+    (summarySkipRes.items || []).map((s) => typeof s === "string" ? s : (s && s.sender_email))
+  );
+  const keep = [];
+  (data.items || []).forEach((it) => {
+    if (state.skippedIds.has(it.id)) state.skippedItems.push(it);
+    else keep.push(it);
+  });
+  state.queue = keep;
+  state.originalTotal = state.queue.length;
+  state.index = 0;
+  state.detail.clear();
+  state.fetching.clear();
+  state.cacheCount = data.cache_count || 0;
+  state.nextPageToken = data.next_page_token || null;
+  state.highlightCategories = String(data.highlight || "Finance/Bill").split(",").map((s) => s.trim()).filter(Boolean);
+  state.rules = rulesRes.items || [];
+  state.proposals = proposalsRes.items || [];
+  state.wikiObservations = wikiRes.items || [];
 }
 
 async function loadMore() {
@@ -327,6 +382,7 @@ async function loadMore() {
     state.originalTotal += added.length;
     state.nextPageToken = data.next_page_token || null;
     state.cacheCount = data.cache_count || 0;
+    state.highlightCategories = String(data.highlight || "Finance/Bill").split(",").map((s) => s.trim()).filter(Boolean);
     showMain();
     renderSidebar();
     await refreshRulesData();
@@ -397,9 +453,38 @@ async function skipSummaryForSender(id) {
     it.needs_summary = false;
     renderGroupView();
     renderSidebar();
+    maybeStartSummaryPolling();
     toast("✕ Sender excluded from AI summaries", "ok", { duration: 2500 });
   } catch (e) {
     toast(`Skip failed: ${e.message}`, "err", { duration: 3000 });
+  }
+}
+
+async function exactSubjectDelete(id) {
+  const it = currentItemOf(id);
+  if (!it) return;
+  const sender = it.sender_email;
+  const subject = it.subject;
+  if (!sender || !subject) {
+    toast("Can't block this email — missing sender or subject", "err", { duration: 3000 });
+    return;
+  }
+  const label = it.sender_name || sender;
+  if (!confirm(`Trash this email and never show “${subject}” from ${label} again? (goes to Gmail Trash)`)) return;
+  try {
+    await api("/api/exact-subject-delete", {
+      method: "POST",
+      body: JSON.stringify({ message_id: id, sender_email: sender, sender_name: it.sender_name || "", subject }),
+    });
+    const sl = sender.toLowerCase();
+    const ql = subject.toLowerCase();
+    state.queue = state.queue.filter((x) =>
+      x.id !== id && !((x.sender_email || "").toLowerCase() === sl && (x.subject || "").toLowerCase() === ql)
+    );
+    refreshMainView();
+    toast(`Deleted — future “${subject}” from ${label} auto-trashes`, "ok", { duration: 3500 });
+  } catch (e) {
+    toast(`Delete failed: ${e.message}`, "err", { duration: 3000 });
   }
 }
 
@@ -417,56 +502,52 @@ function pumpDetail(d) {
   if (state.expandedCardId === d.id || visibleIds.has(d.id)) refreshMainView();
 }
 
-/* Summarize ungrouped ("singles") emails in the background so their
-   cards populate without needing a manual expand. Bounded concurrency. */
-let singleSummQueue = [];
-let singleSummInFlight = 0;
-let singleSummTimer = null;
-const SINGLE_SUMM_CONCURRENCY = 6;
+/* Summary polling ---------------------------------------------------- */
+let summPollTimer = null;
+const SUMM_POLL_MS = 5000;
 
-function scheduleSingleSummarize(ids) {
-  for (const id of ids) {
-    if (state.detail.has(id) || state.fetching.has(id) || singleSummQueue.includes(id)) continue;
-    const it = state.queue.find((x) => x.id === id);
-    if (it && it.summary && it.summary.one_liner) continue;
-    singleSummQueue.push(id);
-  }
-  if (singleSummQueue.length > 200) singleSummQueue.length = 200;
-  if (ids.length) {
-    state.pendingSummCount = Math.max(state.pendingSummCount, singleSummQueue.length);
-    renderSummarizeProgress();
-  }
-  if (!singleSummTimer) {
-    singleSummTimer = setTimeout(bumpSingleSummarize, 400);
+function isRealSummary(s) {
+  return !!(s && s.one_liner && !s.mock);
+}
+
+function hungry(it) {
+  return !isRealSummary(it.summary) && it.needs_summary !== false;
+}
+
+function startSummaryPolling() {
+  if (summPollTimer) return;
+  summPollTimer = setInterval(pollSummaries, SUMM_POLL_MS);
+}
+
+function stopSummaryPolling() {
+  if (summPollTimer) { clearInterval(summPollTimer); summPollTimer = null; }
+}
+
+async function pollSummaries() {
+  const hungryItems = (state.visibleEmails || []).filter(hungry);
+  if (!hungryItems.length) { stopSummaryPolling(); return; }
+  const ids = hungryItems.slice(0, 200).map((i) => i.id).join(",");
+  try {
+    const res = await api(`/api/summaries?ids=${encodeURIComponent(ids)}`);
+    const got = res.summaries || {};
+    let changed = false;
+    for (const it of hungryItems) {
+      const s = got[it.id];
+      if (!s || !isRealSummary(s)) continue;
+      it.summary = s;
+      if (state.detail.has(it.id)) {
+        state.detail.set(it.id, { ...state.detail.get(it.id), summary: s });
+      }
+      changed = true;
+    }
+    if (changed) refreshMainView();
+  } catch (e) {
   }
 }
 
-function renderSummarizeProgress() {
-  if (!el.summProgress) return;
-  const remaining = singleSummQueue.length + singleSummInFlight;
-  if (remaining > 0 && remaining <= state.pendingSummCount) {
-    el.summProgress.textContent = `Summarizing ${state.pendingSummCount - remaining + singleSummInFlight}/${state.pendingSummCount}…`;
-    el.summProgress.classList.remove("hidden");
-  } else if (remaining === 0) {
-    el.summProgress.classList.add("hidden");
-    state.pendingSummCount = 0;
-  }
-}
-
-function bumpSingleSummarize() {
-  singleSummTimer = null;
-  while (singleSummQueue.length && singleSummInFlight < SINGLE_SUMM_CONCURRENCY) {
-    const id = singleSummQueue.shift();
-    const it = state.queue.find((x) => x.id === id);
-    if (!it || (it.summary && it.summary.one_liner)) continue;
-    singleSummInFlight++;
-    fetchDetail(id).finally(() => {
-      singleSummInFlight--;
-      renderSummarizeProgress();
-      bumpSingleSummarize();
-    });
-  }
-  renderSummarizeProgress();
+function maybeStartSummaryPolling() {
+  if ((state.visibleEmails || []).some(hungry)) startSummaryPolling();
+  else stopSummaryPolling();
 }
 
 /* ───────────────────────────── Rendering ───────────────────────── */
@@ -722,7 +803,19 @@ function currentGroups() {
     }
     seen.get(key).ids.push(it.id);
   }
-  return [...seen.values()].sort((a, b) => b.ids.length - a.ids.length);
+  return [...seen.values()].sort(groupRank);
+}
+
+function groupHasHighlight(g) {
+  const priority = state.highlightCategories || [];
+  return state.queue.some((i) => g.ids.includes(i.id) && priority.includes(emailCategory(i)));
+}
+
+function groupRank(a, b) {
+  const am = groupHasHighlight(a);
+  const bm = groupHasHighlight(b);
+  if (am !== bm) return am ? -1 : 1;
+  return b.ids.length - a.ids.length;
 }
 
 function groupKeys() {
@@ -738,17 +831,16 @@ function pickDefaultGroup() {
   return g ? g.key : null;
 }
 
-const CATEGORY_PRIORITY = ["Finance/Bill"];
-
 function categoryCounts() {
   const m = new Map();
   for (const it of state.queue) {
     const c = emailCategory(it) || "Uncategorized";
     m.set(c, (m.get(c) || 0) + 1);
   }
+  const priority = state.highlightCategories || [];
   return [...m.entries()].sort((a, b) => {
-    const ap = CATEGORY_PRIORITY.includes(a[0]);
-    const bp = CATEGORY_PRIORITY.includes(b[0]);
+    const ap = priority.includes(a[0]);
+    const bp = priority.includes(b[0]);
     if (ap !== bp) return ap ? -1 : 1;
     return b[1] - a[1];
   });
@@ -831,6 +923,7 @@ function renderThreadView() {
   el.bulkDeleteBtn.classList.add("hidden");
   el.bulkArchiveBtn.classList.add("hidden");
   el.emailCards.innerHTML = t.items.map(emailCard).join("");
+  maybeStartSummaryPolling();
 }
 
 function renderGroups() {
@@ -936,10 +1029,12 @@ function renderCategoryGroupView() {
         `).join("")}
       </div>
     </div>`).join("");
+  maybeStartSummaryPolling();
 }
 
 function groupRow(g) {
   const active = state.activeGroupKey === g.key;
+  const hl = g.key !== "singles" && groupHasHighlight(g);
   let promo = "";
   if (g.key !== "singles") {
     const items = state.queue.filter((i) => g.ids.includes(i.id));
@@ -952,11 +1047,11 @@ function groupRow(g) {
   if (g.key !== "singles") {
     delBtn = `<button data-gdel="${esc(g.key)}" class="shrink-0 rounded-lg bg-red-500/15 px-2 py-0.5 text-xs font-bold text-red-700 dark:text-red-300 hover:bg-red-500/30 transition" title="Delete all ${g.ids.length} from this sender">🗑</button>`;
   }
+  const hi = hl ? `<span class="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-xs font-bold text-primary" title="Highlight category">★</span>` : "";
   return `
-    <li class="group-row rounded-lg border ${active ? "border-primary/60 bg-primary/10" : "border-border bg-card"} px-3 py-2 flex items-center gap-2 cursor-pointer select-none transition hover:bg-muted" data-group="${esc(g.key)}"${active ? ` data-active="yes"` : ""}>
+    <li class="group-row rounded-lg border ${active ? "border-primary/60 bg-primary/10" : hl ? "border-primary/40 bg-primary/5" : "border-border bg-card"} px-3 py-2 flex items-center gap-2 cursor-pointer select-none transition hover:bg-muted" data-group="${esc(g.key)}"${active ? ` data-active="yes"` : ""}>
       <p class="min-w-0 flex-1 text-sm font-semibold ${active ? "text-primary" : "text-foreground"} truncate">${esc(g.label)}</p>
-      ${promo}
-      <span class="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-xs font-bold text-primary">${g.ids.length}</span>
+      ${promo}${hi}<span class="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-xs font-bold text-primary">${g.ids.length}</span>
       ${delBtn}
     </li>`;
 }
@@ -1074,6 +1169,7 @@ function renderSearchView() {
   el.groupList.innerHTML = results.length
     ? results.map(emailCard).join("")
     : `<p class="text-sm text-muted-foreground p-6">No matches for "${esc(q)}".</p>`;
+  maybeStartSummaryPolling();
 }
 
 /* ───────────────────────────── Group view (middle pane) ──────────── */
@@ -1119,11 +1215,7 @@ function renderGroupView() {
     ? visible.map(emailCard).join("")
     : `<p class="text-sm text-muted-foreground p-6">This group is empty now.</p>`;
 
-  if (key === "singles") {
-    scheduleSingleSummarize(visible.filter((it) => !(it.summary && it.summary.one_liner)).slice(0, 30).map((it) => it.id));
-  } else if (singleSummQueue.length) {
-    singleSummQueue.length = 0;
-  }
+  maybeStartSummaryPolling();
 }
 
 function emailCategory(it) { return (it.summary && it.summary.category) || it.category || ""; }
@@ -1156,18 +1248,18 @@ function emailCard(it) {
   const attCount = ((it.attachments) || []).length;
 
   let summaryHTML;
-  if (sum.one_liner) {
+  if (isRealSummary(sum)) {
     const bullets = (sum.bullets || []).length
       ? `<ul class="mt-1.5 space-y-1 text-sm text-muted-foreground line-clamp-6">${sum.bullets.map((b) => `<li class="flex gap-1.5"><span class="text-primary">▸</span><span>${esc(b)}</span></li>`).join("")}</ul>` : "";
     summaryHTML = `<div class="mt-2 flex items-center gap-2 flex-wrap"><p class="text-base text-foreground font-medium leading-relaxed">${esc(sum.one_liner)}</p>${tokenPill(sum)}</div>${bullets}`;
   } else if (it.needs_summary === false) {
     summaryHTML = `<div class="mt-2 flex items-center gap-2"><span class="shrink-0 rounded border border-gray-400/40 bg-gray-400/10 px-2 py-0.5 text-xs font-semibold text-gray-700">🚫 AI skipped</span></div>`;
   } else {
-    summaryHTML = `<div class="mt-2 shimmer h-4 w-full"></div>`;
+    summaryHTML = `<div class="mt-2 flex items-center gap-1.5 flex-wrap"><span class="shrink-0 rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-xs font-semibold text-sky-700 dark:text-sky-300">⚙ AI summary queued</span></div>`;
   }
 
-  const previewHTML = it.preview
-    ? `<p class="mt-1.5 text-sm text-muted-foreground line-clamp-3 leading-relaxed">${esc(it.preview)}</p>` : "";
+  const previewHTML = (it.preview || it.snippet)
+    ? `<p class="mt-1.5 text-sm text-muted-foreground line-clamp-3 leading-relaxed">${esc(it.preview || it.snippet)}</p>` : "";
 
   const badges = [];
   if (sum.action_needed === "pay") badges.push(`<span class="shrink-0 rounded border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-xs font-semibold text-red-700 dark:text-red-300">💰 PAYMENT</span>`);
@@ -1179,7 +1271,9 @@ function emailCard(it) {
   const primaryBtns = `
     <button data-cardact="trash" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">${isTodo ? "" : ""}Delete</button>
     <button data-cardact="archive" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">Archive</button>
-    <button data-cardact="star" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">Star</button>`;
+    <button data-cardact="star" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">Star</button>
+    ${!state.skippedSummarySenders.has(it.sender_email) ? `<button data-cardact="skipSummary" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5" title="Skip AI summary for this sender">🚫 Skip AI</button>` : ""}
+    ${it.subject ? `<button data-cardact="exactSubjectDelete" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5" title="Trash this exact subject from this sender in Gmail and never store it again">✕ Don't repeat</button>` : ""}`;
 
   const moreActions = expanded ? `
     <div class="mt-2 flex items-center gap-1.5 flex-wrap">
@@ -1188,13 +1282,14 @@ function emailCard(it) {
       <button data-cardact="recat" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5" title="Set or re-evaluate this email's category">Category</button>
       <button data-cardact="regen" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5" title="Regenerate AI summary">↻ Regen</button>
        <button data-cardact="ruleBlock" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">Block sender</button>
-       ${!state.skippedSummarySenders.has(it.sender_email) ? `<button data-cardact="skipSummary" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5" title="Skip AI summary for this sender">🚫 Skip AI</button>` : ""}
        ${it.promo ? `<button data-cardact="rulePromoBlock" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">Auto-del promos</button>` : ""}
       <a href="https://mail.google.com/mail/u/0/#inbox/${esc(it.id)}" target="_blank" rel="noopener noreferrer" class="btn btn-outline text-sm py-1.5" title="Open in Gmail">Gmail ↗</a>
     </div>` : "";
 
+  const hl = (state.highlightCategories || []).includes(cat);
+
   return `
-    <div class="rounded-xl border border-border bg-card p-4 transition group-card ${politics ? "opacity-60" : ""}" data-expand="${esc(it.id)}" data-expanded="${expanded}">
+    <div class="rounded-xl border border-border p-4 transition group-card ${politics ? "opacity-60" : ""} ${hl ? "border-primary/60 bg-primary/5 border-l-4 border-l-primary" : "bg-card"}" data-expand="${esc(it.id)}" data-expanded="${expanded}">
       <div class="flex items-center gap-1.5 text-sm text-muted-foreground min-w-0 cursor-pointer" data-expand="${esc(it.id)}">
         <span class="font-semibold truncate">${esc(sender)}</span>
         ${domain ? `<span class="shrink-0 rounded-md border border-sky-500/30 bg-sky-500/5 px-1.5 py-px font-mono text-xs font-semibold text-sky-700 dark:text-sky-300" title="${esc(it.sender_email || "")}">@${esc(domain)}</span>` : ""}
@@ -1272,6 +1367,7 @@ function refreshMainView() {
   else if (state.viewMode === "categories") renderCategoryGroupView();
   else if (state.viewMode === "threads") renderThreadView();
   else renderGroupView();
+  maybeStartSummaryPolling();
 }
 
 /* ───────────────────────────── Actions ─────────────────────────── */
@@ -2084,6 +2180,7 @@ document.addEventListener("click", (e) => {
   else if (act === "recat") openRecatModal(id);
   else if (act === "regen") regenerateSummary(id);
   else if (act === "skipSummary") skipSummaryForSender(id);
+  else if (act === "exactSubjectDelete") exactSubjectDelete(id);
   else if (act === "todo") toggleTodo(id);
   else if (act === "ruleBlock") issueRuleBlock(id);
   else if (act === "rulePromoBlock") issueRulePromoBlock(id);
