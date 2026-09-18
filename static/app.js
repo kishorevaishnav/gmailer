@@ -22,6 +22,7 @@ const state = {
   skippedIds: new Set(),  // ids hidden "for now" (persisted server-side)
   skippedItems: [],       // metadata for those hidden emails
   todoIds: new Set(),     // ids parked on the TODO page (never deletable)
+  skippedSummarySenders: new Set(),  // sender emails opted out of AI summary
   pendingTodoId: null,    // email awaiting due-date confirmation in the modal
   pendingRecatId: null,   // email awaiting category choice in the modal
   recatCats: [],          // allowed categories cache for the picker
@@ -262,18 +263,22 @@ async function loadQueue() {
   if (el.searchInput) el.searchInput.value = "";
   await showLoading("Pulling latest unread inbox…");
   try {
-    const [data, skippedRes, rulesRes, proposalsRes, wikiRes, todosRes] = await Promise.all([
+    const [data, skippedRes, rulesRes, proposalsRes, wikiRes, todosRes, summarySkipRes] = await Promise.all([
       api(`/api/queue?max_results=${BATCH}`),
       api("/api/skipped").catch(() => ({ items: [] })),
       api("/api/rules").catch(() => ({ items: [] })),
       api("/api/proposals").catch(() => ({ items: [] })),
       api("/api/wiki/observations").catch(() => ({ items: [] })),
       api("/api/todos").catch(() => ({ items: [] })),
+      api("/api/summary-skipped").catch(() => ({ skipped: [] })),
     ]);
     const skipped = skippedRes.items || [];
     state.skippedIds = new Set(skipped.map((i) => i.id));
     state.skippedItems = skipped;
     state.todoIds = new Set((todosRes.items || []).map((i) => i.id));
+    state.skippedSummarySenders = new Set(
+      (summarySkipRes.items || []).map((s) => typeof s === "string" ? s : (s && s.sender_email))
+    );
     const keep = [];
     (data.items || []).forEach((it) => {
       if (state.skippedIds.has(it.id)) state.skippedItems.push(it);
@@ -377,6 +382,24 @@ async function regenerateSummary(id) {
     }
   } catch (e) {
     toast(`Regenerate failed: ${e.message}`, "err", { duration: 3000 });
+  }
+}
+
+async function skipSummaryForSender(id) {
+  const it = state.queue.find((x) => x.id === id);
+  if (!it) return;
+  const sender = it.sender_email;
+  if (!sender) return;
+  toast("Skipping AI summary for this sender…", "info", { duration: 3000 });
+  try {
+    await api("/api/summary-skipped", { method: "POST", body: JSON.stringify({ sender_email: sender }) });
+    state.skippedSummarySenders.add(sender);
+    it.needs_summary = false;
+    renderGroupView();
+    renderSidebar();
+    toast("✕ Sender excluded from AI summaries", "ok", { duration: 2500 });
+  } catch (e) {
+    toast(`Skip failed: ${e.message}`, "err", { duration: 3000 });
   }
 }
 
@@ -715,13 +738,20 @@ function pickDefaultGroup() {
   return g ? g.key : null;
 }
 
+const CATEGORY_PRIORITY = ["Finance/Bill"];
+
 function categoryCounts() {
   const m = new Map();
   for (const it of state.queue) {
     const c = emailCategory(it) || "Uncategorized";
     m.set(c, (m.get(c) || 0) + 1);
   }
-  return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  return [...m.entries()].sort((a, b) => {
+    const ap = CATEGORY_PRIORITY.includes(a[0]);
+    const bp = CATEGORY_PRIORITY.includes(b[0]);
+    if (ap !== bp) return ap ? -1 : 1;
+    return b[1] - a[1];
+  });
 }
 
 function paintViewToggle() {
@@ -1130,6 +1160,8 @@ function emailCard(it) {
     const bullets = (sum.bullets || []).length
       ? `<ul class="mt-1.5 space-y-1 text-sm text-muted-foreground line-clamp-6">${sum.bullets.map((b) => `<li class="flex gap-1.5"><span class="text-primary">▸</span><span>${esc(b)}</span></li>`).join("")}</ul>` : "";
     summaryHTML = `<div class="mt-2 flex items-center gap-2 flex-wrap"><p class="text-base text-foreground font-medium leading-relaxed">${esc(sum.one_liner)}</p>${tokenPill(sum)}</div>${bullets}`;
+  } else if (it.needs_summary === false) {
+    summaryHTML = `<div class="mt-2 flex items-center gap-2"><span class="shrink-0 rounded border border-gray-400/40 bg-gray-400/10 px-2 py-0.5 text-xs font-semibold text-gray-700">🚫 AI skipped</span></div>`;
   } else {
     summaryHTML = `<div class="mt-2 shimmer h-4 w-full"></div>`;
   }
@@ -1155,8 +1187,9 @@ function emailCard(it) {
       <button data-cardact="todo" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">${isTodo ? "✓ Todo" : "Todo"}</button>
       <button data-cardact="recat" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5" title="Set or re-evaluate this email's category">Category</button>
       <button data-cardact="regen" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5" title="Regenerate AI summary">↻ Regen</button>
-      <button data-cardact="ruleBlock" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">Block sender</button>
-      ${it.promo ? `<button data-cardact="rulePromoBlock" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">Auto-del promos</button>` : ""}
+       <button data-cardact="ruleBlock" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">Block sender</button>
+       ${!state.skippedSummarySenders.has(it.sender_email) ? `<button data-cardact="skipSummary" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5" title="Skip AI summary for this sender">🚫 Skip AI</button>` : ""}
+       ${it.promo ? `<button data-cardact="rulePromoBlock" data-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5">Auto-del promos</button>` : ""}
       <a href="https://mail.google.com/mail/u/0/#inbox/${esc(it.id)}" target="_blank" rel="noopener noreferrer" class="btn btn-outline text-sm py-1.5" title="Open in Gmail">Gmail ↗</a>
     </div>` : "";
 
@@ -2050,6 +2083,7 @@ document.addEventListener("click", (e) => {
   if (act === "skip") skipForNowById(id);
   else if (act === "recat") openRecatModal(id);
   else if (act === "regen") regenerateSummary(id);
+  else if (act === "skipSummary") skipSummaryForSender(id);
   else if (act === "todo") toggleTodo(id);
   else if (act === "ruleBlock") issueRuleBlock(id);
   else if (act === "rulePromoBlock") issueRulePromoBlock(id);

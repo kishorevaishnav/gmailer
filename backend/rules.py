@@ -106,6 +106,8 @@ def parse_skill_md(md: str) -> dict:
             body["sender"] = _parse_sender_list(val)
         elif key == "subject":
             body["subject"] = _parse_list(val)
+        elif key in ("exact_subject", "match_exact_subject"):
+            body["exact_subject"] = _parse_list(val)
         elif key == "category":
             body["category"] = _parse_list(val)
         elif key == "emails_per_day":
@@ -125,8 +127,8 @@ def parse_skill_md(md: str) -> dict:
         if "@" not in s and not s.startswith("@"):
             errors.append({"line": 1, "msg": "sender must be an email (a@b.com), @domain, or display name"})
 
-    if not (senders or body.get("subject") or body.get("category") or body.get("emails_per_day")):
-        errors.append({"line": 1, "msg": "at least one match condition is required (sender | subject | category | emails_per_day)"})
+    if not (senders or body.get("exact_subject") or body.get("subject") or body.get("category") or body.get("emails_per_day")):
+        errors.append({"line": 1, "msg": "at least one match condition is required (sender | exact_subject | subject | category | emails_per_day)"})
 
     if errors:
         raise RuleParseError(errors)
@@ -137,6 +139,7 @@ def parse_skill_md(md: str) -> dict:
         "action": action,
         "scope": scope,
         "sender": senders or None,
+        "exact_subject": body.get("exact_subject", []) or [],
         "subject": body.get("subject", []) or [],
         "category": body.get("category", []) or [],
         "emails_per_day": body.get("emails_per_day"),
@@ -178,8 +181,12 @@ def match_item(rule: dict, item: dict, ctx: dict | None = None) -> bool:
     if senders and not any(sender_entry_matches(s, email, name) for s in senders):
         return False
 
+    exact_subs = rule.get("exact_subject") or []
+    subject = (item.get("subject") or "").strip().lower()
+    if exact_subs and not any(k.strip().lower() == subject for k in exact_subs):
+        return False
+
     subs = rule.get("subject") or []
-    subject = (item.get("subject") or "").lower()
     if subs and not any(k.lower() in subject for k in subs):
         return False
 
@@ -224,6 +231,8 @@ def rule_name(parsed: dict) -> str:
         bits.append(f"from {senders[0]}" + (f" +{len(senders) - 1} more" if len(senders) > 1 else ""))
     if parsed.get("subject"):
         bits.append("subject [" + ", ".join(parsed["subject"]) + "]")
+    if parsed.get("exact_subject"):
+        bits.append("exact subject [" + ", ".join(parsed["exact_subject"]) + "]")
     if parsed.get("category"):
         bits.append("category [" + ", ".join(parsed["category"]) + "]")
     if parsed.get("emails_per_day"):
@@ -245,6 +254,8 @@ def render_skill_md(parsed: dict, enabled: bool = True) -> str:
         lines.append(f"sender: {json.dumps(senders, ensure_ascii=False)}")
     if parsed.get("subject"):
         lines.append(f"subject: {json.dumps(parsed['subject'], ensure_ascii=False)}")
+    if parsed.get("exact_subject"):
+        lines.append(f"exact_subject: {json.dumps(parsed['exact_subject'], ensure_ascii=False)}")
     if parsed.get("category"):
         lines.append(f"category: {json.dumps(parsed['category'], ensure_ascii=False)}")
     if parsed.get("emails_per_day"):
@@ -273,4 +284,28 @@ def rule_md_for_sender(email: str, name: str, promo_only: bool = False) -> str:
         "\n"
         "## about\n"
         f"{about}\n"
+    )
+
+
+def rule_md_for_exact_subject(email: str, name: str, subject: str, promo_only: bool = False) -> str:
+    """Trash rule keyed on an exact subject line from a sender.
+
+    Emits a trash rule with ``exact_subject`` so only that precise subject is
+    removed from Gmail and never cached locally.
+    """
+    sender = normalize_sender(email)
+    scope = "promo_only" if promo_only else "all_mail"
+    return (
+        "---\n"
+        f"name: {rule_name({'action': 'trash', 'scope': scope, 'sender': sender, 'exact_subject': [subject]})}\n"
+        "enabled: true\n"
+        "action: trash\n"
+        f"scope: {scope}\n"
+        "---\n"
+        "## match\n"
+        f"sender: {sender}\n"
+        f"exact_subject: {json.dumps([subject], ensure_ascii=False)}\n"
+        "\n"
+        "## about\n"
+        "Trash every message with this exact subject from this sender; never cached locally.\n"
     )

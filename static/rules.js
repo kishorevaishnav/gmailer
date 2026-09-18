@@ -12,7 +12,7 @@ const el = {
   editorErrors: $("editorErrors"), saveBtn: $("saveBtn"), cancelBtn: $("cancelBtn"),
   deleteBtn: $("deleteBtn"), applyNow: $("applyNow"), ruleStats: $("ruleStats"),
   fName: $("fName"), fSender: $("fSender"), fAction: $("fAction"), fScope: $("fScope"),
-  fSubject: $("fSubject"), fCategory: $("fCategory"), fEpd: $("fEpd"), fEnabled: $("fEnabled"),
+     fSubject: $("fSubject"), fExactSubject: $("fExactSubject"), fCategory: $("fCategory"), fEpd: $("fEpd"), fEnabled: $("fEnabled"),
   fAbout: $("fAbout"), buildMdBtn: $("buildMdBtn"),
   refreshBtn: $("refreshBtn"), newRuleBtn: $("newRuleBtn"), toasts: $("toasts"),
   senderMapList: $("senderMapList"), smPattern: $("smPattern"), smCategory: $("smCategory"),
@@ -201,6 +201,10 @@ function fillForm(parsed) {
   el.fAction.value = parsed.action || "trash";
   el.fScope.value = parsed.scope || "all_mail";
   el.fSubject.value = (parsed.subject || []).join(", ");
+  const es = parsed.exact_subject;
+  el.fExactSubject.value = Array.isArray(es)
+    ? JSON.stringify(es)
+    : (es ? (Array.isArray(es) ? JSON.stringify(es) : String(es)) : "");
   el.fCategory.value = (parsed.category || []).join(", ");
   el.fEpd.value = parsed.emails_per_day || "";
   el.fEnabled.checked = parsed.enabled !== false;
@@ -219,6 +223,7 @@ function buildMarkdown() {
   ];
   if (el.fSender.value.trim()) lines.push(`sender: ${el.fSender.value.trim()}`);
   if (el.fSubject.value.trim()) lines.push(`subject: ${el.fSubject.value.trim()}`);
+  if (el.fExactSubject.value.trim()) lines.push(`exact_subject: ${el.fExactSubject.value.trim()}`);
   if (el.fCategory.value.trim()) lines.push(`category: ${el.fCategory.value.trim()}`);
   if (el.fEpd.value) lines.push(`emails_per_day: ${el.fEpd.value}`);
   lines.push("", "## about", el.fAbout.value.trim() || "");
@@ -236,7 +241,7 @@ function newRule(presetMd) {
   if (presetMd) {
     el.ruleMarkdown.value = presetMd;
   } else {
-    fillForm({ name: "", sender: "", action: "trash", scope: "all_mail", subject: [], category: [], enabled: true, about: "" });
+    fillForm({ name: "", sender: "", action: "trash", scope: "all_mail", subject: [], exact_subject: [], category: [], enabled: true, about: "" });
     buildMarkdown();
   }
   window.scrollTo({ top: 0, behavior: "smooth" });

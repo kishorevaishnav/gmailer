@@ -28,6 +28,7 @@ Payload shape stays stable for the frontend:
 import json
 import logging
 import re
+import threading
 import time
 
 import requests
@@ -37,6 +38,7 @@ from . import config, store
 logger = logging.getLogger("gmailer.ai_summary")
 
 _CACHE: dict[str, dict] = {}
+_CACHE_LOCK = threading.Lock()
 _CACHE_MAX = 300
 
 _SYSTEM_PROMPT = (
@@ -272,10 +274,15 @@ def _finalize_summary(d: dict) -> dict:
     return d
 
 
-def generate_summary(msg: dict, force: bool = False) -> dict:
+def generate_summary(msg: dict, force: bool = False) -> dict | None:
     mid = msg.get("id") or ""
-    if not force and mid and mid in _CACHE:
-        return dict(_CACHE[mid])
+    sender = (msg.get("sender_email") or "").strip().lower()
+    if not force and sender and store.is_summary_skipped(sender):
+        return None
+    if not force and mid:
+        with _CACHE_LOCK:
+            if mid in _CACHE:
+                return dict(_CACHE[mid])
 
     categories = _allowed_categories()
     summary = _ollama_summarize(msg, categories)
@@ -284,9 +291,10 @@ def generate_summary(msg: dict, force: bool = False) -> dict:
     summary["category"] = sender_mapped_category(msg, categories) or summary.get("category", "")
 
     if mid:
-        if len(_CACHE) >= _CACHE_MAX:
-            _CACHE.pop(next(iter(_CACHE)))
-        _CACHE[mid] = summary
+        with _CACHE_LOCK:
+            if len(_CACHE) >= _CACHE_MAX:
+                _CACHE.pop(next(iter(_CACHE)))
+            _CACHE[mid] = summary
         store.save_message(msg, summary)
     return summary
 
@@ -628,8 +636,9 @@ def _mock_category_summary(category: str, messages: list[dict]) -> str:
 
 def clear_in_memory_caches() -> None:
     """Drop per-message + group summary caches (used on 'Clear cache')."""
-    _CACHE.clear()
-    _GROUP_CACHE.clear()
+    with _CACHE_LOCK:
+        _CACHE.clear()
+        _GROUP_CACHE.clear()
 
 
 def summarize_group(client, group_key: str, label: str, message_ids: list[str]) -> dict:

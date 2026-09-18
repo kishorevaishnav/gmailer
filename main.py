@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from backend import ai_summary, auth, config, gmail_service, store
 from backend import gtasks
 from backend import queue as queue_module
+from backend import summarizer
 from backend import wiki as wiki_module
 from backend.rules import RuleParseError, parse_skill_md
 
@@ -31,6 +32,11 @@ def _startup_migrate_legacy():
             logger.info("Migrated %d legacy blocked/promo senders into rules", made)
     except Exception:
         logger.exception("Legacy blocked migration failed")
+
+
+@app.on_event("startup")
+def _start_background_summarizer():
+    summarizer.start()
 
 
 # --- Auth --------------------------------------------------------------------
@@ -154,6 +160,7 @@ def api_queue(max_results: int = config.DEFAULT_BATCH, page_token: str | None = 
 
     kept, auto_trashed, auto_starred, auto_skipped, _rule_stats = _apply_rules(service, items)
     items = kept
+    skips = set(store.get_summary_skips())
     for item in items:
         # Hydrate cached summaries (and bodies) so reloads and group views
         # render instantly without re-hitting Gmail/Ollama.
@@ -167,6 +174,8 @@ def api_queue(max_results: int = config.DEFAULT_BATCH, page_token: str | None = 
                 item["category"] = cached["category"]
             if cached.get("category_locked"):
                 item["category_locked"] = True
+        sender = (item.get("sender_email") or "").strip().lower()
+        item["needs_summary"] = not (item.get("summary") and item["summary"].get("one_liner")) and sender not in skips
     return {
         "total": len(items),
         "items": items,
@@ -344,6 +353,28 @@ def api_skipped_remove(req: SkipRemoveRequest):
 def api_skipped_clear():
     cleared = store.clear_skipped()
     return {"ok": True, "cleared": cleared}
+
+
+class SummarySkipAddRequest(BaseModel):
+    sender_email: str
+
+
+@app.get("/api/summary-skipped")
+def api_summary_skipped():
+    return {"items": store.get_summary_skips()}
+
+
+@app.post("/api/summary-skipped")
+def api_summary_skipped_add(req: SummarySkipAddRequest):
+    store.add_summary_skip(req.sender_email)
+    ai_summary.clear_in_memory_caches()
+    return {"ok": True}
+
+
+@app.delete("/api/summary-skipped/{sender_email}")
+def api_summary_skipped_remove(sender_email: str):
+    store.remove_summary_skip(sender_email)
+    return {"ok": True}
 
 
 # --- TODO list -----------------------------------------------------------------

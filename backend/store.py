@@ -154,6 +154,11 @@ CREATE TABLE IF NOT EXISTS settings (
     value     TEXT NOT NULL,
     updated_at REAL
 );
+
+CREATE TABLE IF NOT EXISTS summary_skipped (
+    sender_email  TEXT PRIMARY KEY,
+    created_at    REAL
+);
 """
 
 _DEFAULT_CATEGORIES = [
@@ -239,6 +244,12 @@ def _get() -> sqlite3.Connection:
                 _conn.execute(_col)
             except (sqlite3.OperationalError, sqlite3.ProgrammingError):
                 pass
+        try:
+            _conn.execute(
+                "CREATE TABLE IF NOT EXISTS summary_skipped (sender_email TEXT PRIMARY KEY, created_at REAL)"
+            )
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError):
+            pass
         _seed_default_categories()
         _seed_sender_map()
         _conn.commit()
@@ -784,6 +795,63 @@ def clear_skipped() -> int:
     except Exception as exc:
         logger.warning("store.clear_skipped failed: %s", exc)
     return cleared
+
+
+# --- Summary-skip --------------------------------------------------------------
+# Senders whose AI summary the user opted out of. generate_summary() returns
+# None for these so no Ollama call is made; the UI still shows the card and
+# persists the message body. Distinct from "skipped" (which hides from the queue).
+
+def add_summary_skip(email: str) -> None:
+    email = (email or "").strip().lower()
+    if not email:
+        return
+    try:
+        with _lock:
+            _get().execute(
+                "INSERT OR REPLACE INTO summary_skipped (sender_email, created_at) VALUES (?, ?)",
+                (email, time.time()),
+            )
+            _get().commit()
+    except Exception as exc:
+        logger.warning("store.add_summary_skip failed: %s", exc)
+
+
+def remove_summary_skip(email: str) -> None:
+    email = (email or "").strip().lower()
+    try:
+        with _lock:
+            _get().execute("DELETE FROM summary_skipped WHERE sender_email = ?", (email,))
+            _get().commit()
+    except Exception as exc:
+        logger.warning("store.remove_summary_skip failed: %s", exc)
+
+
+def is_summary_skipped(email: str) -> bool:
+    email = (email or "").strip().lower()
+    if not email:
+        return False
+    try:
+        with _lock:
+            row = _get().execute(
+                "SELECT 1 FROM summary_skipped WHERE sender_email = ?", (email,)
+            ).fetchone()
+        return bool(row)
+    except Exception as exc:
+        logger.warning("store.is_summary_skipped failed: %s", exc)
+        return False
+
+
+def get_summary_skips() -> list[str]:
+    try:
+        with _lock:
+            rows = _get().execute(
+                "SELECT sender_email FROM summary_skipped ORDER BY created_at DESC"
+            ).fetchall()
+        return [str(r["sender_email"]) for r in rows]
+    except Exception as exc:
+        logger.warning("store.get_summary_skips failed: %s", exc)
+        return []
 
 
 # --- TODO list ---------------------------------------------------------------

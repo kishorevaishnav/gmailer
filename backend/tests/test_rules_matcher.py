@@ -12,7 +12,7 @@ def item(**kw):
 
 def rule(**kw):
     base = {"name": "r", "enabled": True, "action": "trash", "scope": "all_mail",
-            "sender": None, "subject": [], "category": [], "emails_per_day": None, "about": ""}
+            "sender": None, "subject": [], "exact_subject": [], "category": [], "emails_per_day": None, "about": ""}
     base.update(kw)
     return base
 
@@ -88,3 +88,23 @@ def test_frequency_map_builds_per_day():
     out = frequency_map(traces, window_days=10)
     assert out["a@b.com"] == pytest.approx(0.2)
     assert out["x@y.com"] == pytest.approx(0.1)
+
+
+def test_exact_subject_matches_case_insensitively():
+    r = rule(exact_subject=["Payment due"])
+    assert match_item(r, item(subject="Payment Due"), {})
+    assert not match_item(r, item(subject="Payment due tomorrow"), {})
+    assert not match_item(r, item(subject="Re: Payment due"), {})
+
+
+def test_exact_subject_checked_before_keyword_subject():
+    r = rule(exact_subject=["Invoice #123"], subject=["invoice"])
+    assert match_item(r, item(subject="Invoice #123"), {})
+    assert not match_item(r, item(subject="Your invoice is ready"), {})
+
+
+def test_exact_subject_list_matches_any():
+    r = rule(exact_subject=["Invoice #123", "Receipt"])
+    assert match_item(r, item(subject="Receipt"), {})
+    assert match_item(r, item(subject="Invoice #123"), {})
+    assert not match_item(r, item(subject="Invoice #456"), {})
