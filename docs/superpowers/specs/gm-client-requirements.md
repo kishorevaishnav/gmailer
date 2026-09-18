@@ -115,3 +115,37 @@ top — in both the categories view and the senders view.
 - [ ] Finance/Bill ranks above all other categories **and** senders.
 - [ ] Highlighted cards are visually distinct.
 - [ ] Changing the highlight list in Settings re-pins the views immediately.
+
+## 7. Email bodies render formatted, as in Gmail (sanitized)
+
+**Requirement**: Expanding an email shows the real formatted body — bold,
+lists, tables, banners, colors, and inline images — rendered as the sender
+intended, instead of a plain-text wall. The full message must be readable
+(no display-side truncation).
+
+**Covers**:
+- Raw HTML is captured lazily on first expand (`body_html`, untruncated) and
+  persisted; already-cached messages backfill on their first expand.
+- Rendering is client-side and sanitized with vendored DOMPurify before
+  injection; scripts, event-attrs, and JS-URLs are stripped.
+- The formatted body always renders on a light **paper** surface, in dark mode
+  too.
+- `cid:` inline images resolve through the app's own attachment proxy; no
+  external host is contacted when rendering.
+- **External images are blocked by default** (tracking/leak vector): placeholders
+  appear, plus a per-sender "Show images" button remembered in localStorage
+  (`gmailer.allowImages.<sender>`).
+- A full-screen "reader" shows the entire email; long emails can also open it
+  from the expanded card.
+- Plain-text fallback and linkified `body_text` remain for text-only mail, and
+  `body_text` stays the source for AI summaries and search.
+
+**Acceptance criteria**:
+- [ ] Expanding an HTML email renders bold/headings/tables/lists with sender
+      colors on a light paper surface — no browser console XSS/sanitizer errors.
+- [ ] A cached email serves `body_html` from the fast path on a repeat expand
+      (no Gmail call).
+- [ ] External images show a placeholder with a working "Show images" button;
+      the choice persists per sender.
+- [ ] The full-email reader opens the entire email and closes on ✕ / Escape /
+      backdrop click.

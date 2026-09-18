@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS messages (
     promo           INTEGER DEFAULT 0,
     body_text       TEXT,
     body_truncated  INTEGER DEFAULT 0,
+    body_html       TEXT,
+    has_html        INTEGER DEFAULT 0,
     summary         TEXT,
     category        TEXT,
     fetched_at      REAL,
@@ -231,6 +233,16 @@ def _get() -> sqlite3.Connection:
         except (sqlite3.OperationalError, sqlite3.ProgrammingError):
             pass
         try:
+            _conn.execute("ALTER TABLE messages ADD COLUMN body_html TEXT")
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError):
+            pass
+        try:
+            # No DEFAULT: pre-migration rows get NULL so callers can tell
+            # "HTML exists but not captured yet" from "genuinely text-only".
+            _conn.execute("ALTER TABLE messages ADD COLUMN has_html INTEGER")
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError):
+            pass
+        try:
             _conn.execute("ALTER TABLE sender_map ADD COLUMN subject_contains TEXT DEFAULT ''")
         except (sqlite3.OperationalError, sqlite3.ProgrammingError):
             pass
@@ -303,8 +315,9 @@ def save_message(msg: dict, summary: dict | None = None) -> None:
                 """INSERT INTO messages
                    (id, sender_name, sender_email, subject, snippet,
                     internal_date_ms, label_ids, promo, body_text,
-                    body_truncated, summary, category, fetched_at, attachments)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    body_truncated, body_html, has_html,
+                    summary, category, fetched_at, attachments)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(id) DO UPDATE SET
                       sender_name=excluded.sender_name,
                       sender_email=excluded.sender_email,
@@ -315,6 +328,8 @@ def save_message(msg: dict, summary: dict | None = None) -> None:
                       promo=excluded.promo,
                       body_text=excluded.body_text,
                       body_truncated=excluded.body_truncated,
+                      body_html=excluded.body_html,
+                      has_html=excluded.has_html,
                       summary=excluded.summary,
                       category=excluded.category,
                       fetched_at=excluded.fetched_at,
@@ -330,6 +345,8 @@ def save_message(msg: dict, summary: dict | None = None) -> None:
                     1 if _is_promo(labels) else 0,
                     msg.get("body_text"),
                     1 if msg.get("body_truncated") else 0,
+                    msg.get("body_html"),
+                    1 if msg.get("has_html") else 0,
                     json.dumps(summary, ensure_ascii=False) if summary else None,
                     category if category else None,
                     time.time(),
@@ -353,6 +370,8 @@ def _message_row_to_dict(row) -> dict:
         "promo": bool(row["promo"]),
         "body_text": row["body_text"] or "",
         "body_truncated": bool(row["body_truncated"]),
+        "body_html": row["body_html"] or "",
+        "has_html": row["has_html"],
         "category": row["category"],
         "attachments": [],
     }

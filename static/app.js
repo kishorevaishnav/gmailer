@@ -75,6 +75,7 @@ const el = {
   emptyScreen: $("emptyScreen"), emptyStat: $("emptyStat"), emptyReload: $("emptyReload"),
   groupHeader: $("groupHeader"), groupTitle: $("groupTitle"), groupCount: $("groupCount"), groupOverview: $("groupOverview"), bulkDeleteBtn: $("bulkDeleteBtn"), bulkArchiveBtn: $("bulkArchiveBtn"), emailCards: $("emailCards"), remapCatsBtn: $("remapCatsBtn"),
   normalView: $("normalView"), editorView: $("editorView"), editorTitle: $("editorTitle"), editorContent: $("editorContent"), editorErrors: $("editorErrors"), editorSave: $("editorSave"), editorCancel: $("editorCancel"), editorDelete: $("editorDelete"), editorApplyNow: $("editorApplyNow"),
+  readerOverlay: $("readerOverlay"), readerHeader: $("readerHeader"), readerScroll: $("readerScroll"), readerBody: $("readerBody"),
 };
 
 /* ───────────────────────────── Utils ───────────────────────────── */
@@ -913,7 +914,7 @@ function renderThreadView() {
   el.groupHeader.classList.toggle("hidden", !t);
   if (!t) {
     state.visibleEmails = [];
-    el.emailCards.innerHTML = `<p class="text-sm text-muted-foreground p-6">Pick a thread on the left.</p>`;
+    el.emailCards.innerHTML = sanitizeCards(`<p class="text-sm text-muted-foreground p-6">Pick a thread on the left.</p>`);
     return;
   }
   state.visibleEmails = t.items;
@@ -922,7 +923,7 @@ function renderThreadView() {
   el.groupOverview.textContent = t.names.join(" · ");
   el.bulkDeleteBtn.classList.add("hidden");
   el.bulkArchiveBtn.classList.add("hidden");
-  el.emailCards.innerHTML = t.items.map(emailCard).join("");
+  el.emailCards.innerHTML = sanitizeCards(t.items.map(emailCard).join(""));
   maybeStartSummaryPolling();
 }
 
@@ -971,7 +972,7 @@ function renderCategoryGroupView() {
   el.groupHeader.classList.toggle("hidden", !cat);
   if (!cat) {
     state.visibleEmails = [];
-    el.emailCards.innerHTML = `<p class="text-sm text-muted-foreground p-6">Pick a category on the left.</p>`;
+    el.emailCards.innerHTML = sanitizeCards(`<p class="text-sm text-muted-foreground p-6">Pick a category on the left.</p>`);
     return;
   }
   const emails = state.queue.filter((it) => (emailCategory(it) || "Uncategorized") === cat);
@@ -982,7 +983,7 @@ function renderCategoryGroupView() {
     el.groupTitle.textContent = cat;
     el.groupCount.textContent = "0 emails";
     el.groupOverview.textContent = `Every “${cat}” email in this batch.`;
-    el.emailCards.innerHTML = `<p class="text-sm text-muted-foreground p-6">No emails in this category right now.</p>`;
+    el.emailCards.innerHTML = sanitizeCards(`<p class="text-sm text-muted-foreground p-6">No emails in this category right now.</p>`);
     return;
   }
   const senders = new Map();
@@ -1014,7 +1015,7 @@ function renderCategoryGroupView() {
   el.groupTitle.textContent = cat;
   el.groupCount.textContent = `${emails.length} email${emails.length === 1 ? "" : "s"}`;
   el.groupOverview.textContent = `${groups.length} sender${groups.length === 1 ? "" : "s"} · newest first`;
-  el.emailCards.innerHTML = groups.map((g) => `
+  el.emailCards.innerHTML = sanitizeCards(groups.map((g) => `
     <div class="rounded-xl border border-border overflow-hidden">
       <div class="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted">
         <span class="min-w-0 flex-1 truncate text-sm font-bold text-foreground">${esc(g.label)}</span>
@@ -1028,7 +1029,7 @@ function renderCategoryGroupView() {
           ${t.items.map(emailCard).join("")}
         `).join("")}
       </div>
-    </div>`).join("");
+    </div>`).join(""));
   maybeStartSummaryPolling();
 }
 
@@ -1177,7 +1178,7 @@ function renderGroupView() {
   const key = state.activeGroupKey;
   el.groupHeader.classList.toggle("hidden", key === null);
   if (key === null) {
-    el.emailCards.innerHTML = `<p class="text-sm text-muted-foreground p-6">Pick a group on the left, or load more from the inbox.</p>`;
+    el.emailCards.innerHTML = sanitizeCards(`<p class="text-sm text-muted-foreground p-6">Pick a group on the left, or load more from the inbox.</p>`);
     return;
   }
   if (key === "singles") {
@@ -1211,9 +1212,9 @@ function renderGroupView() {
     }
   }
   el.groupOverview.textContent = overview;
-  el.emailCards.innerHTML = visible.length
+  el.emailCards.innerHTML = sanitizeCards(visible.length
     ? visible.map(emailCard).join("")
-    : `<p class="text-sm text-muted-foreground p-6">This group is empty now.</p>`;
+    : `<p class="text-sm text-muted-foreground p-6">This group is empty now.</p>`);
 
   maybeStartSummaryPolling();
 }
@@ -1335,9 +1336,11 @@ function detailHTML(it) {
   const date = dateMs ? timeAgo(new Date(dateMs).toISOString()) : "";
   const bodyHTML = !d
     ? `<div class="mt-2 shimmer h-4 w-full"></div><div class="mt-2 shimmer h-4 w-3/4"></div><div class="mt-2 shimmer h-4 w-5/6"></div>`
-    : d.body_text
-      ? `<div class="email-body mt-2 max-w-none leading-relaxed text-foreground selection:bg-primary/20">${linkify(d.body_text)}</div>${d.body_truncated ? `<p class="mt-2 text-sm text-amber-600 dark:text-amber-400">Body truncated at 80k chars for speed.</p>` : ""}`
-      : `<div class="email-body mt-2 text-foreground">(no extractable text)</div>`;
+    : d.body_html
+      ? `<div class="email-paper mt-3 rounded-xl p-5" data-sender="${esc(sender)}">${d.body_html}</div>${d.body_html.length > 12000 ? `<button data-reader-id="${esc(it.id)}" class="btn btn-outline text-sm py-1.5 mt-3">📖 Open full reader</button>` : ""}`
+      : d.body_text
+        ? `<div class="email-body mt-2 max-w-none leading-relaxed text-foreground selection:bg-primary/20">${linkify(d.body_text)}</div>${d.body_truncated ? `<p class="mt-2 text-sm text-amber-600 dark:text-amber-400">Body truncated at 80k chars for speed.</p>` : ""}`
+        : `<div class="email-body mt-2 text-foreground">(no extractable text)</div>`;
   return `
     <div class="mt-4 border-t border-border pt-4">
       <div class="flex items-center gap-2 flex-wrap text-sm text-muted-foreground">
@@ -1358,6 +1361,107 @@ function detailHTML(it) {
 function currentItemOf(id) {
   return state.queue.find((i) => i.id === id)
     || (state.searchResults || []).find((i) => i.id === id);
+}
+
+/* ───────────────────────── Formatted email body ─────────────────────── */
+
+function sanitizeCards(markup) {
+  if (!window.DOMPurify) { if (el.emailCards) queueMicrotask(() => finalizeEmailPapers(el.emailCards)); return markup; }
+  const clean = DOMPurify.sanitize(markup);
+  if (el.emailCards) queueMicrotask(() => finalizeEmailPapers(el.emailCards));
+  return clean;
+}
+
+function imagesAllowedFor(sender) {
+  if (!sender) return false;
+  try { return localStorage.getItem(`gmailer.allowImages.${sender}`) === "1"; }
+  catch (e) { return false; }
+}
+
+function setImagesAllowedFor(sender, on) {
+  if (!sender) return;
+  try {
+    if (on) localStorage.setItem(`gmailer.allowImages.${sender}`, "1");
+    else localStorage.removeItem(`gmailer.allowImages.${sender}`);
+  } catch (e) {}
+}
+
+function stripExternalCssUrls(style) {
+  return style.replace(/url\((?!\s*["']?\/api\/)[^)]*\)/gi, "none");
+}
+
+function finalizeEmailPapers(root) {
+  (root.querySelectorAll ? root.querySelectorAll(".email-paper") : []).forEach((paper) => {
+    const sender = (paper.getAttribute("data-sender") || "").trim().toLowerCase();
+    if (!paper._cleanHtml) paper._cleanHtml = paper.innerHTML;
+    paper.querySelectorAll("a[href]").forEach((a) => {
+      if (/^https?:/i.test(a.getAttribute("href") || "")) {
+        a.setAttribute("target", "_blank");
+        a.setAttribute("rel", "noopener noreferrer");
+      }
+    });
+    const allowed = imagesAllowedFor(sender);
+    let blocked = 0;
+    paper.querySelectorAll("img").forEach((img) => {
+      const src = img.getAttribute("src") || "";
+      if (!src || src.startsWith("/api/")) return;
+      if (allowed) return;
+      img.setAttribute("data-lazy-src", src);
+      img.removeAttribute("src");
+      img.removeAttribute("srcset");
+      img.setAttribute("class", "email-external-img");
+      img.textContent = "🖼 external image hidden";
+      blocked += 1;
+    });
+    paper.querySelectorAll("[style]").forEach((el0) => {
+      const s = el0.getAttribute("style") || "";
+      if (s && /url\(/i.test(s) && !allowed) el0.setAttribute("style", stripExternalCssUrls(s));
+    });
+    if (blocked && !paper.querySelector(".email-blocked-banner")) {
+      const banner = document.createElement("div");
+      banner.className = "email-blocked-banner";
+      banner.innerHTML = `<span>${blocked} external image${blocked === 1 ? "" : "s"} blocked</span><button type="button" data-show-images="${esc(sender)}" class="btn btn-outline text-xs py-1">Show images</button>`;
+      paper.prepend(banner);
+    }
+  });
+}
+
+function revealPaperImages(paper, sender) {
+  setImagesAllowedFor(sender, true);
+  if (paper._cleanHtml) { paper.innerHTML = paper._cleanHtml; paper._cleanHtml = null; }
+  finalizeEmailPapers(paper);
+}
+
+async function openReader(id) {
+  const d = await fetchDetail(id);
+  if (!d) return;
+  const sender = (d.sender_email || "").trim().toLowerCase();
+  el.readerHeader.innerHTML = `<div class="min-w-0 flex-1">
+      <p class="truncate text-base font-bold">${esc(d.subject || "(no subject)")}</p>
+      <p class="truncate text-sm text-muted-foreground">${esc(d.sender_email || d.sender_name || "")}</p>
+    </div>
+    <button id="readerCloseBtn" class="btn btn-outline text-sm">✕ Close</button>`;
+  el.readerCloseBtn.addEventListener("click", closeReader);
+  const paper = el.readerBody;
+  paper.setAttribute("data-sender", sender);
+  if (d.body_html) {
+    paper.innerHTML = DOMPurify.sanitize(d.body_html);
+  } else if (d.body_text) {
+    paper.innerHTML = DOMPurify.sanitize(`<div class="email-body">${linkify(d.body_text)}</div>`);
+  } else {
+    paper.innerHTML = "<p>(no extractable text)</p>";
+  }
+  el.readerOverlay.classList.remove("hidden");
+  el.readerOverlay.classList.add("flex");
+  finalizeEmailPapers(paper);
+  el.readerScroll.scrollTop = 0;
+}
+
+function closeReader() {
+  el.readerOverlay.classList.add("hidden");
+  el.readerOverlay.classList.remove("flex");
+  el.readerBody.innerHTML = "";
+  el.readerBody.removeAttribute("data-sender");
 }
 
 function refreshMainView() {
@@ -2186,6 +2290,24 @@ document.addEventListener("click", (e) => {
   else if (act === "rulePromoBlock") issueRulePromoBlock(id);
   else if (act === "keep") keepEmail(id);
   else actOn(act, id);
+});
+
+document.addEventListener("click", (e) => {
+  const sb = e.target.closest("[data-show-images]");
+  if (sb) {
+    const paper = sb.closest(".email-paper");
+    if (paper) revealPaperImages(paper, sb.dataset.showImages);
+    return;
+  }
+  const rb = e.target.closest("[data-reader-id]");
+  if (rb) openReader(rb.dataset.readerId);
+});
+
+el.readerOverlay.addEventListener("click", (e) => {
+  if (e.target === el.readerOverlay) closeReader();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !el.readerOverlay.classList.contains("hidden")) closeReader();
 });
 
 document.addEventListener("visibilitychange", () => {

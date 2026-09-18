@@ -248,16 +248,18 @@ def api_message(message_id: str):
             pass
 
     cached = store.load_message(message_id)
-    if cached and cached.get("summary") and cached.get("body_text"):
-        safe_review(None)
-        cached["from_cache"] = True
-        return cached
     if cached and cached.get("body_text"):
-        summarizer.mark_urgent(message_id)
-        summarizer.nudge()
-        safe_review(None)
-        cached["from_cache"] = True
-        return cached
+        display_complete = cached.get("has_html") == 0 or bool(cached.get("body_html"))
+        if display_complete:
+            if cached.get("summary"):
+                safe_review(None)
+                cached["from_cache"] = True
+                return cached
+            summarizer.mark_urgent(message_id)
+            summarizer.nudge()
+            safe_review(None)
+            cached["from_cache"] = True
+            return cached
     service = require_service()
     msg = _run(gmail_service.get_full, service, message_id)
     if cached and cached.get("summary"):
@@ -353,7 +355,7 @@ def api_dev_hash():
     import hashlib
 
     h = hashlib.sha1()
-    files = sorted(config.STATIC_DIR.glob("*")) + [config.BASE_DIR / "main.py"] \
+    files = sorted(config.STATIC_DIR.rglob("*")) + [config.BASE_DIR / "main.py"] \
         + sorted((config.BASE_DIR / "backend").glob("*.py"))
     for f in files:
         try:

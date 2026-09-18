@@ -217,6 +217,48 @@ html, body {
 .email-body a:hover { color: #0369a1; }
 .dark .email-body a:hover { color: #bae6fd; }
 
+/* ════════════════ Formatted email (Gmail-like paper surface) ════════════════ */
+
+.email-paper {
+  background: #ffffff;
+  color: #1e293b;
+  font-size: 15px;
+  line-height: 1.6;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  user-select: text;
+}
+.email-paper img { max-width: 100%; height: auto; }
+.email-paper a { color: #0284c7; text-decoration: underline; text-underline-offset: 2px; }
+.email-paper table { max-width: 100%; border-collapse: collapse; }
+.email-paper pre { white-space: pre-wrap; }
+.email-blocked-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 13px;
+}
+.email-external-img {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  margin: 4px 0;
+  width: 100%;
+  border: 1px dashed #cbd5e1;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
 /* ════════════════ Toast animation ════════════════ */
 
 .toast { animation: toast-in .18s ease; }

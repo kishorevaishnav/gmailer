@@ -412,6 +412,9 @@ _COMMENT_RE = re.compile(r"(?s)<!--.*?-->")
 _MULTI_WS_RE = re.compile(r"[ \t]+")
 _BLANK_RUN_RE = re.compile(r"\n{3,}")
 
+_CID_ATTR_RE = re.compile(r"(?i)(src|poster|background)=([\"']\s*)cid:([^\"'<>\s]+)")
+_CID_CSS_RE  = re.compile(r"(?i)(?:url\(\s*)cid:([^\"'()\s]+)")
+
 
 def _flatten_text(parts: list[dict], texts: list[str]) -> None:
     for p in parts:
@@ -470,6 +473,68 @@ def _extract_text(payload: dict) -> str:
     return plain_text or html_text
 
 
+def _flatten_html(parts: list[dict], out: list[str]) -> None:
+    for p in parts:
+        mime = p.get("mimeType", "")
+        if mime == "text/html" and p.get("body", {}).get("data"):
+            out.append(_decode_body(p))
+        if p.get("parts"):
+            _flatten_html(p.get("parts", []), out)
+
+
+def _extract_html(payload: dict) -> str:
+    """Return the raw HTML source of the top body (first text/html part)."""
+    parts = payload.get("parts") or []
+    if not parts:
+        if (payload.get("mimeType") or "").lower() == "text/html":
+            return _decode_body(payload)
+        return ""
+    candidates: list[str] = []
+    _flatten_html(parts, candidates)
+    return candidates[0] if candidates else ""
+
+
+def _cid_attachment_map(payload: dict) -> dict[str, str]:
+    """Map `cid:key` (Content-ID) → attachmentId so inline figures can render."""
+    mapping: dict[str, str] = {}
+
+    def walk(parts: list[dict]) -> None:
+        for p in parts or []:
+            cid = ""
+            for h in p.get("headers") or []:
+                if (h.get("name") or "").lower() == "content-id":
+                    cid = (h.get("value") or "").strip().strip("<>")
+                    break
+            if cid and (p.get("body") or {}).get("attachmentId"):
+                mapping[cid] = p["body"]["attachmentId"]
+            if p.get("parts"):
+                walk(p["parts"])
+
+    walk(payload.get("parts") or [])
+    return mapping
+
+
+def _rewrite_cid_urls(html_source: str, message_id: str, mapping: dict[str, str]) -> str:
+    """Rewrite `cid:` src/href/background figures to our lazy attachment proxy."""
+    if not html_source or not mapping:
+        return html_source
+
+    def repl_attr(m: "re.Match") -> str:
+        att_id = mapping.get(m.group(3).strip())
+        if not att_id:
+            return m.group(0)
+        return f'{m.group(1)}={m.group(2)}/api/messages/{message_id}/attachments/{att_id}'
+
+    def repl_css(m: "re.Match") -> str:
+        att_id = mapping.get(m.group(1).strip().split("/", 1)[0])
+        if not att_id:
+            return m.group(0)
+        return f"url(/api/messages/{message_id}/attachments/{att_id}"
+
+    out = _CID_ATTR_RE.sub(repl_attr, html_source)
+    return _CID_CSS_RE.sub(repl_css, out)
+
+
 def extract_attachments(payload: dict) -> list[dict]:
     """Attachment descriptors (filename/mime/size/attachmentId), recursively."""
     found: list[dict] = []
@@ -505,6 +570,12 @@ def get_full(client: GmailClient, message_id: str) -> dict:
     truncated = len(body_text) > config.BODY_MAX_CHARS
     body_text = body_text[: config.BODY_MAX_CHARS]
 
+    html_source = _extract_html(payload)
+    if html_source:
+        html_source = _rewrite_cid_urls(
+            html_source, message_id, _cid_attachment_map(payload)
+        )
+
     return {
         "id": message_id,
         "thread_id": raw.get("threadId", ""),
@@ -518,6 +589,8 @@ def get_full(client: GmailClient, message_id: str) -> dict:
         "promo": _is_promo_label(raw.get("labelIds", [])),
         "body_text": body_text,
         "body_truncated": truncated,
+        "body_html": html_source,
+        "has_html": bool(html_source),
         "attachments": extract_attachments(payload),
     }
 

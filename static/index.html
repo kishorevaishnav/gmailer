@@ -250,6 +250,17 @@
     <button id="emptyReload" class="mt-2 rounded-xl bg-card px-6 py-3 font-bold text-foreground hover:bg-muted transition">Load more unread</button>
   </div>
 
+  <!-- ─────────── Full-email reader ─────────── -->
+  <div id="readerOverlay" class="hidden fixed inset-0 z-50 bg-slate-950/60 p-3 sm:p-6">
+    <div class="mx-auto flex h-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+      <header id="readerHeader" class="shrink-0 flex items-center gap-3 border-b border-border px-5 py-3"></header>
+      <div id="readerScroll" class="flex-1 min-h-0 overflow-y-auto">
+        <div id="readerBody" class="email-paper mx-auto min-h-full w-full max-w-3xl"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/vendor/purify.min.js"></script>
   <script src="/static/app.js"></script>
   <script src="/static/dev-reload.js"></script>
 </body>
